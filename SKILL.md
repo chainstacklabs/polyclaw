@@ -1,7 +1,7 @@
 ---
 name: polyclaw
-description: "Trading-enabled Polymarket skill with LLM-powered hedge discovery. Browse prediction markets, execute trades (split + CLOB) on Polygon, and track positions with P&L. Features: (1) Market browsing - trending, search, details via Gamma API, (2) Wallet management via env var, (3) Trading - buy YES/NO positions using split + CLOB execution, (4) Position tracking - entry prices, current prices, P&L calculation. Powered by Chainstack Polygon RPC. Keywords: polymarket, prediction markets, trading, polygon, web3, defi, betting, crypto wallet, clob, conditional tokens."
-metadata: {"openclaw":{"emoji":"🦞","homepage":"https://polymarket.com","primaryEnv":"POLYCLAW_PRIVATE_KEY","requires":{"bins":["uv"],"env":["CHAINSTACK_NODE","POLYCLAW_PRIVATE_KEY"]},"install":[{"id":"uv-brew","kind":"brew","formula":"uv","bins":["uv"],"label":"Install uv (brew)"}]}}
+description: "Trade on Polymarket via split + CLOB execution. Browse markets, track positions with P&L, discover hedges via LLM. Polygon/Web3."
+metadata: {"openclaw":{"emoji":"🦞","homepage":"https://polymarket.com","primaryEnv":"POLYCLAW_PRIVATE_KEY","requires":{"bins":["uv"],"env":["CHAINSTACK_NODE","POLYCLAW_PRIVATE_KEY"]},"install":[{"id":"uv-brew","kind":"brew","formula":"uv","bins":["uv"],"label":"Install uv (brew)"}]},"clawdbot":{"emoji":"🦞","homepage":"https://polymarket.com","primaryEnv":"POLYCLAW_PRIVATE_KEY","requires":{"bins":["uv"],"env":["CHAINSTACK_NODE","POLYCLAW_PRIVATE_KEY"]},"install":[{"id":"uv-brew","kind":"brew","formula":"uv","bins":["uv"],"label":"Install uv (brew)"}]}}
 ---
 
 # PolyClaw
