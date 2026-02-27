@@ -341,7 +341,7 @@ uv run python scripts/polyclaw.py wallet approve
 
 ## License
 
-MIT
+Apache 2.0
 
 ## Credits
 
