@@ -48,7 +48,8 @@ async def get_positions_value(wallet_address: str) -> tuple[float, int]:
     token_ids = [pos.token_id for pos in positions]
     try:
         prices = await gamma.get_prices(token_ids)
-    except Exception:
+    except Exception as e:
+        print(f"Warning: Failed to fetch midpoint prices; using avg_price fallback: {e}", file=sys.stderr)
         prices = {}
 
     for pos in positions:

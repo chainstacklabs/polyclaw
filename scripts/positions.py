@@ -119,11 +119,8 @@ async def cmd_list(args):
             all_positions = await subgraph.get_positions()
             # Open positions: amount > 0
             open_positions = [p for p in all_positions if p.amount > 0]
-            # Closed positions: amount == 0 AND realized_pnl != 0
-            closed_positions = [
-                p for p in all_positions
-                if p.amount == 0 and p.realized_pnl != 0
-            ]
+            # Closed positions: all with amount == 0
+            closed_positions = [p for p in all_positions if p.amount == 0]
             positions = open_positions + closed_positions
         else:
             positions = await subgraph.get_open_positions()
@@ -156,7 +153,7 @@ async def cmd_list(args):
 
     for pos in positions:
         is_open = pos.amount > 0
-        current_price = float(prices.get(pos.token_id, 0)) if is_open else 0.0
+        current_price = float(prices.get(pos.token_id, pos.avg_price)) if is_open else 0.0
         current_value = current_price * pos.amount if is_open else 0.0
         cost_basis = pos.avg_price * pos.amount if is_open else 0.0
         unrealized_pnl = (current_value - cost_basis) if is_open else 0.0
@@ -240,9 +237,9 @@ async def cmd_show(args):
     if is_open:
         try:
             prices = await gamma.get_prices([pos.token_id])
-            current_price = float(prices.get(pos.token_id, 0))
-        except Exception:
-            pass
+            current_price = float(prices.get(pos.token_id, pos.avg_price))
+        except Exception as e:
+            print(f"Warning: Price fetch failed for token {pos.token_id[:12]}: {e}", file=sys.stderr)
 
     current_value = current_price * pos.amount if is_open else 0.0
     cost_basis = pos.avg_price * pos.amount if is_open else 0.0

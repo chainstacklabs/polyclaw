@@ -1,10 +1,13 @@
 """Cache for conditionId-to-market metadata resolution."""
 
 import json
+import sys
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
+
+import httpx
 
 from lib.storage import get_storage_dir
 
@@ -106,7 +109,8 @@ class MarketCache:
             seen.add(token_id)
             try:
                 market = await gamma.get_market_by_token(token_id)
-            except Exception:
+            except (httpx.HTTPError, ValueError, KeyError) as e:
+                print(f"Warning: Cache warm-up failed for token {token_id[:12]}: {e}", file=sys.stderr)
                 continue
             if market.condition_id and self.get(market.condition_id) is None:
                 staged[market.condition_id] = MarketCacheEntry(

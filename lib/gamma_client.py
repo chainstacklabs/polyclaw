@@ -197,7 +197,14 @@ class GammaClient:
                 pass
 
         async with httpx.AsyncClient(timeout=self.timeout) as http:
-            await asyncio.gather(*[_fetch_one(http, tid) for tid in token_ids])
+            unique_ids = list(dict.fromkeys(token_ids))
+            sem = asyncio.Semaphore(20)
+
+            async def _bounded_fetch(tid: str) -> None:
+                async with sem:
+                    await _fetch_one(http, tid)
+
+            await asyncio.gather(*[_bounded_fetch(tid) for tid in unique_ids])
 
         return prices
 
