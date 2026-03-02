@@ -119,6 +119,32 @@ class GammaClient:
                 raise ValueError(f"Market not found: {slug}")
             return self._parse_market(markets[0])
 
+    async def get_market_by_token(self, token_id: str) -> Market:
+        """Get market by CLOB token ID."""
+        async with httpx.AsyncClient(timeout=self.timeout) as http:
+            resp = await http.get(
+                f"{GAMMA_API_BASE}/markets",
+                params={"clob_token_ids": token_id},
+            )
+            resp.raise_for_status()
+            markets = resp.json()
+            if not markets:
+                raise ValueError(f"No market found for token_id: {token_id}")
+            return self._parse_market(markets[0])
+
+    async def get_market_by_condition(self, condition_id: str) -> Market:
+        """Get market by condition ID."""
+        async with httpx.AsyncClient(timeout=self.timeout) as http:
+            resp = await http.get(
+                f"{GAMMA_API_BASE}/markets",
+                params={"conditionId": condition_id},
+            )
+            resp.raise_for_status()
+            markets = resp.json()
+            if not markets:
+                raise ValueError(f"No market found for conditionId: {condition_id}")
+            return self._parse_market(markets[0])
+
     async def get_events(self, limit: int = 20) -> list[MarketGroup]:
         """Get events/groups with their markets."""
         async with httpx.AsyncClient(timeout=self.timeout) as http:

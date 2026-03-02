@@ -12,6 +12,7 @@ import sys
 import json
 import asyncio
 import argparse
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -24,35 +25,40 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 
 from lib.wallet_manager import WalletManager
 from lib.gamma_client import GammaClient
-from lib.position_storage import PositionStorage
-from lib.journal_storage import JournalStorage
 from lib.portfolio_storage import PortfolioStorage, PortfolioSnapshot
+from lib.subgraph_client import SubgraphClient, SubgraphError
+from lib.market_cache import MarketCache
 
 
-async def get_positions_value(positions: list[dict]) -> tuple[float, int]:
+async def get_positions_value(wallet_address: str) -> tuple[float, int]:
     """Calculate total open positions market value. Returns (value_usd, count)."""
+    try:
+        client = SubgraphClient(wallet_address)
+        positions = await client.get_open_positions()
+    except SubgraphError:
+        return 0.0, 0
+
+    if not positions:
+        return 0.0, 0
+
     gamma = GammaClient()
     total = 0.0
-    count = 0
+
+    # Batch price lookup via CLOB API
+    token_ids = [pos.token_id for pos in positions]
+    try:
+        prices = await gamma.get_prices(token_ids)
+    except Exception:
+        prices = {}
 
     for pos in positions:
-        if pos.get("status") != "open":
-            continue
-        try:
-            market = await gamma.get_market(pos["market_id"])
-            current_price = market.yes_price if pos["position"] == "YES" else market.no_price
-            value = pos["entry_amount"] * current_price
-            total += value
-            count += 1
-        except Exception:
-            # Fallback to entry amount
-            total += pos.get("entry_amount", 0)
-            count += 1
+        current_price = float(prices.get(pos.token_id, pos.avg_price))
+        total += pos.amount * current_price
 
-    return total, count
+    return total, len(positions)
 
 
-def cmd_status(args):
+async def cmd_status(args):
     """Portfolio status overview."""
     wallet = WalletManager()
     if not wallet.is_unlocked:
@@ -60,12 +66,10 @@ def cmd_status(args):
         return 1
 
     balances = wallet.get_balances()
-    storage = PositionStorage()
-    positions = storage.load_all()
     portfolio_storage = PortfolioStorage()
     rules = portfolio_storage.load_rules()
 
-    positions_usd, position_count = asyncio.run(get_positions_value(positions))
+    positions_usd, position_count = await get_positions_value(wallet.address)
     cash = balances.usdc + balances.usdc_e
     total = cash + positions_usd
     cash_pct = (cash / total * 100) if total > 0 else 100
@@ -113,18 +117,48 @@ def cmd_rules(args):
     return 0
 
 
-def cmd_history(args):
-    """Show trade journal history."""
-    journal = JournalStorage()
-    entries = journal.load_all(limit=args.limit)
+async def cmd_history(args):
+    """Show trade history from on-chain events."""
+    wallet = WalletManager()
+    if not wallet.is_unlocked:
+        print(json.dumps({"error": "No wallet configured. Set POLYCLAW_PRIVATE_KEY."}))
+        return 1
 
-    from dataclasses import asdict
-    result = [asdict(e) for e in entries]
+    try:
+        client = SubgraphClient(wallet.address)
+        events = await client.get_all_events()
+    except SubgraphError as e:
+        print(json.dumps({"error": f"Failed to query trade history: {e}"}))
+        return 1
+
+    if args.limit is not None:
+        events = events[:args.limit]
+
+    # Enrich with market metadata
+    gamma = GammaClient()
+    cache = MarketCache()
+    condition_ids = list({e.condition_id for e in events})
+    metadata = await cache.resolve_batch(condition_ids, gamma)
+
+    result = []
+    for e in events:
+        entry = metadata.get(e.condition_id)
+        result.append({
+            "id": e.id,
+            "timestamp": e.timestamp,
+            "type": e.event_type,
+            "market_id": entry.market_id if entry else "",
+            "question": entry.question if entry else e.condition_id,
+            "amount_usd": round(e.amount_usdc, 2),
+            "tx_hash": e.tx_hash,
+            "condition_id": e.condition_id,
+        })
+
     print(json.dumps(result, indent=2))
     return 0
 
 
-def cmd_snapshot(args):
+async def cmd_snapshot(args):
     """Save current portfolio snapshot."""
     wallet = WalletManager()
     if not wallet.is_unlocked:
@@ -132,10 +166,8 @@ def cmd_snapshot(args):
         return 1
 
     balances = wallet.get_balances()
-    pos_storage = PositionStorage()
-    positions = pos_storage.load_all()
 
-    positions_usd, position_count = asyncio.run(get_positions_value(positions))
+    positions_usd, position_count = await get_positions_value(wallet.address)
     cash = balances.usdc + balances.usdc_e
     total = cash + positions_usd
     cash_pct = (cash / total * 100) if total > 0 else 100
@@ -155,7 +187,6 @@ def cmd_snapshot(args):
     portfolio_storage = PortfolioStorage()
     portfolio_storage.save_snapshot(snapshot)
 
-    from dataclasses import asdict
     print(json.dumps(asdict(snapshot), indent=2))
     return 0
 
@@ -175,15 +206,19 @@ def main():
 
     args = parser.parse_args()
 
-    commands = {
-        "status": cmd_status,
+    sync_commands = {
         "rules": cmd_rules,
+    }
+    async_commands = {
+        "status": cmd_status,
         "history": cmd_history,
         "snapshot": cmd_snapshot,
     }
 
-    if args.command in commands:
-        return commands[args.command](args)
+    if args.command in sync_commands:
+        return sync_commands[args.command](args)
+    elif args.command in async_commands:
+        return asyncio.run(async_commands[args.command](args))
     else:
         parser.print_help()
         return 1

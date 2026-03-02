@@ -21,9 +21,9 @@ Browse prediction markets, execute trades on-chain, and discover hedging opportu
 - Split + CLOB execution (split USDC → YES+NO, sell unwanted side)
 
 ### Position tracking
-- `polyclaw positions` — List open positions with live P&L
-- `polyclaw position <id>` — Detailed position view
-- Positions tracked locally in `~/.openclaw/polyclaw/positions.json`
+- `polyclaw positions list` — List open positions with live P&L from chain data
+- `polyclaw positions list --all` — Include closed positions
+- `polyclaw positions show <token_id>` — Detailed position view by token ID prefix
 
 ### Wallet management
 - `polyclaw wallet status` — Show address, POL/USDC/USDC.e balances
@@ -47,13 +47,13 @@ Browse prediction markets, execute trades on-chain, and discover hedging opportu
 ### Portfolio management
 - `polyclaw portfolio status` — Portfolio overview with allocation check
 - `polyclaw portfolio rules` — Show portfolio rules (informational)
-- `polyclaw portfolio history` — Trade journal entries
+- `polyclaw portfolio history` — On-chain trade history (splits, merges, redemptions)
 - `polyclaw portfolio snapshot` — Save portfolio snapshot for trend tracking
 
 ### Performance analytics
-- `polyclaw performance summary` — Win rate, P&L, profit factor
-- `polyclaw performance trades` — Per-trade breakdown
-- `polyclaw performance chart` — ASCII portfolio value chart
+- `polyclaw performance summary` — Win rate, P&L, profit factor (from on-chain data)
+- `polyclaw performance trades` — Per-trade breakdown (from on-chain events)
+- `polyclaw performance chart` — ASCII portfolio value chart (from snapshots)
 
 ### Hedge discovery
 - `polyclaw hedge scan` — Scan trending markets for hedging opportunities
@@ -161,7 +161,7 @@ If you have your own conviction on a market:
 ```
 Buy $50 YES on market <market_id>
 ```
-Executes split + CLOB flow and records position.
+Executes split + CLOB flow. Position appears automatically in on-chain history.
 
 ### 5. Hedge discovery flow
 Find LLM-analyzed arbitrage opportunities:
@@ -218,7 +218,7 @@ Shows total value, cash allocation, position exposure, and rule compliance.
 ```
 How are my trades performing?
 ```
-Shows win rate, P&L, and profit factor from the trade journal.
+Shows win rate, P&L, and profit factor from on-chain data.
 
 ### Full flow example
 
@@ -255,12 +255,12 @@ polyclaw/
 │   ├── markets.py               # Market browsing (Gamma API)
 │   ├── wallet.py                # Wallet management
 │   ├── trade.py                 # Split + CLOB execution
-│   ├── positions.py             # Position tracking + P&L
+│   ├── positions.py             # On-chain position tracking + P&L
 │   ├── merge_tokens.py          # Token merge/recovery
 │   ├── redeem.py                # Auto-redeem resolved positions
 │   ├── swap_usdc.py             # USDC <-> USDC.e swapping
 │   ├── portfolio.py             # Portfolio status, rules, history, snapshot
-│   ├── performance.py           # Performance analytics
+│   ├── performance.py           # Performance analytics (on-chain)
 │   └── hedge.py                 # LLM hedge discovery
 │
 └── lib/
@@ -269,10 +269,11 @@ polyclaw/
     ├── contracts.py             # CTF ABI + addresses
     ├── coverage.py              # Coverage calculation + tiers
     ├── gamma_client.py          # Polymarket Gamma API client
-    ├── journal_storage.py       # Trade journal (JSONL)
     ├── llm_client.py            # OpenRouter LLM client
+    ├── market_cache.py          # conditionId → market metadata cache
     ├── portfolio_storage.py     # Portfolio snapshots + rules
-    ├── position_storage.py      # Position JSON storage
+    ├── storage.py               # Shared storage utilities
+    ├── subgraph_client.py       # Goldsky Activity + PnL subgraph client
     └── wallet_manager.py        # Wallet lifecycle
 ```
 
@@ -327,7 +328,7 @@ order = client.get_order("0xc93d6214...")
 
 **Response fields:** `id`, `market`, `asset_id`, `side`, `price`, `original_size`, `size_matched`, `status` (MATCHED/LIVE/CANCELLED), `type` (FOK/GTC), `created_at`, `maker_address`, `associate_trades`
 
-**Note:** There's no public explorer for CLOB order IDs. To view your trade history, connect your wallet at polymarket.com → Portfolio → Activity.
+**Note:** There's no public explorer for CLOB order IDs. To view your on-chain trade history, use `polyclaw portfolio history` (queries the Goldsky Activity Subgraph) or connect your wallet at polymarket.com → Portfolio → Activity.
 
 ## Hedge discovery flow
 

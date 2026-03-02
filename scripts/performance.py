@@ -9,8 +9,8 @@ Usage:
 
 import sys
 import json
+import asyncio
 import argparse
-from dataclasses import asdict
 from pathlib import Path
 
 # Add parent to path for lib imports
@@ -20,48 +20,55 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-from lib.journal_storage import JournalStorage
+from lib.wallet_manager import WalletManager
+from lib.gamma_client import GammaClient
+from lib.subgraph_client import SubgraphClient, SubgraphError
+from lib.market_cache import MarketCache
 from lib.portfolio_storage import PortfolioStorage
 
 
-def cmd_summary(args):
-    """Overall performance summary."""
-    journal = JournalStorage()
-    entries = journal.load_all()
+async def cmd_summary(args):
+    """Overall performance summary from PnL subgraph."""
+    wallet = WalletManager()
+    if not wallet.is_unlocked:
+        print(json.dumps({"error": "No wallet configured. Set POLYCLAW_PRIVATE_KEY."}))
+        return 1
 
-    # Reverse to chronological for processing
-    entries.reverse()
+    try:
+        client = SubgraphClient(wallet.address)
+        positions = await client.get_positions()
+    except SubgraphError as e:
+        print(json.dumps({"error": f"Failed to query performance data: {e}"}))
+        return 1
 
-    closes = [e for e in entries if e.type in ("close", "redeem")]
-    opens = [e for e in entries if e.type == "open"]
+    # Classify positions
+    open_positions = [p for p in positions if p.amount > 0]
+    closed_positions = [p for p in positions if p.amount == 0 and p.realized_pnl != 0]
 
-    total_trades = len(opens)
-    closed_trades = len(closes)
+    total_trades = len(open_positions) + len(closed_positions)
+    open_trades = len(open_positions)
+    closed_trades = len(closed_positions)
 
-    opened_ids = {e.position_id for e in opens if e.position_id}
-    closed_ids = {e.position_id for e in closes if e.position_id}
-    open_trades = len(opened_ids - closed_ids) if opened_ids else max(0, total_trades - closed_trades)
+    wins = [p for p in closed_positions if p.realized_pnl > 0]
+    losses = [p for p in closed_positions if p.realized_pnl < 0]
+    breakeven = [p for p in closed_positions if p.realized_pnl == 0]
 
-    wins = [e for e in closes if (e.pnl or 0) > 0]
-    losses = [e for e in closes if (e.pnl or 0) < 0]
-    breakeven = [e for e in closes if (e.pnl or 0) == 0]
-
-    total_pnl = sum(e.pnl or 0 for e in closes)
+    total_pnl = sum(p.realized_pnl for p in closed_positions)
     win_rate = len(wins) / closed_trades if closed_trades > 0 else 0
 
-    gross_profit = sum(e.pnl for e in wins) if wins else 0
-    gross_loss = abs(sum(e.pnl for e in losses)) if losses else 0
-    profit_factor = gross_profit / gross_loss if gross_loss > 0 else 0
+    gross_profit = sum(p.realized_pnl for p in wins) if wins else 0
+    gross_loss = abs(sum(p.realized_pnl for p in losses)) if losses else 0
+    profit_factor = gross_profit / gross_loss if gross_loss > 0 else None
 
     # Average return %
     returns = []
-    for e in closes:
-        if e.amount_usd and e.amount_usd > 0:
-            returns.append((e.pnl or 0) / e.amount_usd * 100)
+    for p in closed_positions:
+        if p.total_bought > 0:
+            returns.append(p.realized_pnl / p.total_bought * 100)
     avg_return_pct = sum(returns) / len(returns) if returns else 0
 
-    best_pnl = max((e.pnl or 0 for e in closes), default=0)
-    worst_pnl = min((e.pnl or 0 for e in closes), default=0)
+    best_pnl = max((p.realized_pnl for p in closed_positions), default=0)
+    worst_pnl = min((p.realized_pnl for p in closed_positions), default=0)
 
     result = {
         "total_trades": total_trades,
@@ -72,7 +79,7 @@ def cmd_summary(args):
         "breakeven": len(breakeven),
         "win_rate": round(win_rate, 3),
         "total_pnl": round(total_pnl, 2),
-        "profit_factor": round(profit_factor, 2),
+        "profit_factor": round(profit_factor, 2) if profit_factor is not None else None,
         "avg_return_pct": round(avg_return_pct, 1),
         "best_trade_pnl": round(best_pnl, 2),
         "worst_trade_pnl": round(worst_pnl, 2),
@@ -81,14 +88,46 @@ def cmd_summary(args):
     return 0
 
 
-def cmd_trades(args):
-    """Trade-by-trade breakdown."""
-    journal = JournalStorage()
-    entries = journal.load_all()
-    trades = [e for e in entries if e.type in ("open", "close", "redeem", "merge")]
+async def cmd_trades(args):
+    """Trade-by-trade breakdown from on-chain events.
+
+    Note: Same output as `portfolio history`. Keep in sync with
+    portfolio.py::cmd_history if modifying the event format.
+    """
+    wallet = WalletManager()
+    if not wallet.is_unlocked:
+        print(json.dumps({"error": "No wallet configured. Set POLYCLAW_PRIVATE_KEY."}))
+        return 1
+
+    try:
+        client = SubgraphClient(wallet.address)
+        events = await client.get_all_events()
+    except SubgraphError as e:
+        print(json.dumps({"error": f"Failed to query trade events: {e}"}))
+        return 1
+
     if args.limit is not None:
-        trades = trades[:args.limit]
-    result = [asdict(e) for e in trades]
+        events = events[:args.limit]
+
+    gamma = GammaClient()
+    cache = MarketCache()
+    condition_ids = list({e.condition_id for e in events})
+    metadata = await cache.resolve_batch(condition_ids, gamma)
+
+    result = []
+    for e in events:
+        entry = metadata.get(e.condition_id)
+        result.append({
+            "id": e.id,
+            "timestamp": e.timestamp,
+            "type": e.event_type,
+            "market_id": entry.market_id if entry else "",
+            "question": entry.question if entry else e.condition_id,
+            "amount_usd": round(e.amount_usdc, 2),
+            "tx_hash": e.tx_hash,
+            "condition_id": e.condition_id,
+        })
+
     print(json.dumps(result, indent=2))
     return 0
 
@@ -168,14 +207,18 @@ def main():
 
     args = parser.parse_args()
 
-    commands = {
-        "summary": cmd_summary,
-        "trades": cmd_trades,
+    sync_commands = {
         "chart": cmd_chart,
     }
+    async_commands = {
+        "summary": cmd_summary,
+        "trades": cmd_trades,
+    }
 
-    if args.command in commands:
-        return commands[args.command](args)
+    if args.command in sync_commands:
+        return sync_commands[args.command](args)
+    elif args.command in async_commands:
+        return asyncio.run(async_commands[args.command](args))
     else:
         parser.print_help()
         return 1

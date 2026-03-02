@@ -6,7 +6,7 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Optional
 
-from lib.position_storage import get_storage_dir
+from lib.storage import get_storage_dir
 
 SNAPSHOTS_FILE = get_storage_dir() / "snapshots.jsonl"
 RULES_FILE = get_storage_dir() / "portfolio_rules.json"

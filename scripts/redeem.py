@@ -21,27 +21,35 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 from web3 import Web3
+import httpx
 
 from lib.wallet_manager import WalletManager
 from lib.gamma_client import GammaClient
 from lib.contracts import CONTRACTS, CTF_ABI, NEG_RISK_ADAPTER_ABI, POLYGON_CHAIN_ID
-from lib.position_storage import PositionStorage
+from lib.subgraph_client import SubgraphClient, SubgraphError
+from lib.market_cache import MarketCache, MarketCacheEntry
 
 
 async def cmd_redeem(args):
     """Find resolved markets and redeem winning positions."""
-    storage = PositionStorage()
     gamma = GammaClient()
-    open_positions = storage.get_open()
-
-    if not open_positions:
-        print(json.dumps({"redeemed": [], "resolved_lost": [], "unchanged": 0}))
-        return 0
+    cache = MarketCache()
 
     wallet = WalletManager()
     if not wallet.is_unlocked:
         print(json.dumps({"error": "No wallet configured. Set POLYCLAW_PRIVATE_KEY."}))
         return 1
+
+    subgraph = SubgraphClient(wallet.address)
+    try:
+        open_positions = await subgraph.get_open_positions()
+    except SubgraphError as e:
+        print(json.dumps({"error": f"Subgraph unreachable: {e}"}))
+        return 1
+
+    if not open_positions:
+        print(json.dumps({"redeemed": [], "resolved_lost": [], "unchanged": 0}))
+        return 0
 
     w3 = Web3(Web3.HTTPProvider(wallet.rpc_url, request_kwargs={"timeout": 60, "proxies": {}}))
     address = Web3.to_checksum_address(wallet.address)
@@ -53,38 +61,57 @@ async def cmd_redeem(args):
     resolved_lost = []
     unchanged = 0
 
-    # Group by market
-    by_market = {}
-    for p in open_positions:
-        by_market.setdefault(p["market_id"], []).append(p)
-
-    for market_id, positions in by_market.items():
+    # Resolve each position's market via Gamma API (token_id -> market)
+    # and group by market_id
+    by_market: dict[str, list[tuple]] = {}  # market_id -> [(pos, market)]
+    for pos in open_positions:
         try:
-            market = await gamma.get_market(market_id)
-        except Exception as e:
-            print(f"Could not fetch market {market_id}: {e}", file=sys.stderr)
-            unchanged += len(positions)
+            market = await gamma.get_market_by_token(pos.token_id)
+        except (httpx.HTTPError, ValueError) as e:
+            print(f"Could not resolve market for token {pos.token_id[:12]}: {e}", file=sys.stderr)
+            unchanged += 1
             continue
+
+        # Cache the result in MarketCache (keyed by condition_id)
+        if cache.get(market.condition_id) is None:
+            cache.put(market.condition_id, MarketCacheEntry(
+                condition_id=market.condition_id,
+                market_id=market.id,
+                question=market.question,
+                slug=market.slug,
+                yes_token_id=market.yes_token_id,
+                no_token_id=market.no_token_id or "",
+                cached_at=datetime.now(timezone.utc).isoformat(),
+            ))
+
+        by_market.setdefault(market.id, []).append((pos, market))
+
+    for market_id, entries in by_market.items():
+        # All entries share the same market object
+        market = entries[0][1]
 
         if not market.resolved:
-            unchanged += len(positions)
+            unchanged += len(entries)
             continue
 
-        for pos in positions:
+        for pos, market in entries:
+            side = "YES" if pos.token_id == market.yes_token_id else "NO"
             outcome = (market.outcome or "").upper()
-            won = str(pos["position"]).upper() == outcome
-            token_id = int(pos["token_id"])
+            won = side == outcome
+            try:
+                token_id = int(pos.token_id)
+            except ValueError:
+                print(f"Invalid token ID: {pos.token_id[:12]}", file=sys.stderr)
+                unchanged += 1
+                continue
             balance = ctf.functions.balanceOf(address, token_id).call()
 
             if not won:
-                if not args.dry_run:
-                    storage.update_exit(pos["position_id"], "resolved-lost")
-                    storage.update_notes(pos["position_id"], f"Resolved: {market.outcome}. Position lost.")
                 resolved_lost.append({
-                    "position_id": pos["position_id"],
+                    "token_id": pos.token_id,
                     "market_id": market_id,
                     "question": market.question,
-                    "side": pos["position"],
+                    "side": side,
                     "outcome": "lost",
                 })
                 continue
@@ -92,10 +119,10 @@ async def cmd_redeem(args):
             # Won — redeem
             if args.dry_run:
                 redeemed.append({
-                    "position_id": pos["position_id"],
+                    "token_id": pos.token_id,
                     "market_id": market_id,
                     "question": market.question,
-                    "side": pos["position"],
+                    "side": side,
                     "outcome": "won",
                     "amount_redeemed": balance / 1e6,
                     "tx_hash": "dry-run",
@@ -106,12 +133,12 @@ async def cmd_redeem(args):
                 market.condition_id[2:] if market.condition_id.startswith("0x") else market.condition_id
             )
 
-            neg_risk = pos.get("neg_risk", False) or market.neg_risk
+            neg_risk = market.neg_risk
 
             if neg_risk:
                 # amounts array: [outcome_0_amount, outcome_1_amount]
                 # YES = outcome 0, NO = outcome 1
-                if pos["position"] == "YES":
+                if side == "YES":
                     amounts = [balance, 0]
                 else:
                     amounts = [0, balance]
@@ -150,12 +177,11 @@ async def cmd_redeem(args):
             receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
 
             if receipt["status"] == 1:
-                storage.update_exit(pos["position_id"], "redeemed", exit_tx=tx_hash.hex())
                 redeemed.append({
-                    "position_id": pos["position_id"],
+                    "token_id": pos.token_id,
                     "market_id": market_id,
                     "question": market.question,
-                    "side": pos["position"],
+                    "side": side,
                     "outcome": "won",
                     "amount_redeemed": balance / 1e6,
                     "tx_hash": tx_hash.hex(),

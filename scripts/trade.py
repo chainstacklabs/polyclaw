@@ -4,11 +4,9 @@
 import sys
 import json
 import time
-import uuid
 import asyncio
 import argparse
 from dataclasses import dataclass, asdict
-from datetime import datetime, timezone
 from typing import Optional
 from pathlib import Path
 
@@ -25,8 +23,6 @@ from lib.wallet_manager import WalletManager
 from lib.gamma_client import GammaClient, Market
 from lib.clob_client import ClobClientWrapper
 from lib.contracts import CONTRACTS, CTF_ABI, POLYGON_CHAIN_ID
-from lib.position_storage import PositionStorage, PositionEntry
-from lib.journal_storage import JournalStorage
 
 
 @dataclass
@@ -276,50 +272,6 @@ async def cmd_buy(args):
                 unwanted = "NO" if result.position == "YES" else "YES"
                 print(f"  Note: You have {result.amount:.0f} {unwanted} tokens to sell manually")
 
-            # Get market metadata for condition_id and neg_risk
-            try:
-                market = await executor._gamma.get_market(result.market_id)
-                condition_id = market.condition_id
-                neg_risk = market.neg_risk
-            except Exception:
-                condition_id = None
-                neg_risk = None
-
-            # Record position
-            storage = PositionStorage()
-            position_entry = PositionEntry(
-                position_id=str(uuid.uuid4()),
-                market_id=result.market_id,
-                question=result.question,
-                position=result.position,
-                token_id=result.wanted_token_id,
-                entry_time=datetime.now(timezone.utc).isoformat(),
-                entry_amount=result.amount,
-                entry_price=result.entry_price,
-                split_tx=result.split_tx,
-                clob_order_id=result.clob_order_id,
-                clob_filled=result.clob_filled,
-                condition_id=condition_id,
-                neg_risk=neg_risk,
-            )
-            storage.add(position_entry)
-            print(f"  Position ID: {position_entry.position_id[:12]}...")
-
-            # Auto-append journal entry (best-effort, don't fail the trade)
-            try:
-                journal = JournalStorage()
-                journal_entry = JournalStorage.create_entry(
-                    entry_type="open",
-                    market_id=result.market_id,
-                    position_id=position_entry.position_id,
-                    side=result.position,
-                    amount_usd=result.amount,
-                    price=result.entry_price,
-                    tx_hash=result.split_tx,
-                )
-                journal.append(journal_entry)
-            except (OSError, ValueError, TypeError) as e:
-                print(f"Warning: failed to append journal entry: {e}", file=sys.stderr)
         else:
             print(f"Trade failed: {result.error}")
             return 1
