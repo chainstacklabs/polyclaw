@@ -154,7 +154,7 @@ async def cmd_history(args):
     except SubgraphError:
         pass  # Best-effort; resolve_batch will try conditionId fallback
 
-    condition_ids = list({e.condition_id for e in events})
+    condition_ids = [cid for cid in {e.condition_id for e in events} if cid]
     metadata = await cache.resolve_batch(condition_ids, gamma)
 
     result = []

@@ -145,7 +145,7 @@ async def cmd_list(args):
         try:
             prices = await gamma.get_prices(open_token_ids)
         except Exception as e:
-            print(f"Warning: Price fetch failed, values will show $0: {e}", file=sys.stderr)
+            print(f"Warning: Price fetch failed, using avg_price fallback: {e}", file=sys.stderr)
 
     results = []
     total_pnl = 0.0

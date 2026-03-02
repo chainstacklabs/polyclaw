@@ -44,15 +44,18 @@ class MarketCache:
     def _load(self) -> dict[str, dict]:
         """Read JSON file, return dict of conditionId -> entry dict."""
         try:
-            return json.loads(self.cache_path.read_text(encoding="utf-8"))
+            data = json.loads(self.cache_path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
         except (FileNotFoundError, json.JSONDecodeError):
             return {}
 
     def _save(self) -> None:
-        """Write the internal cache dict to disk as JSON."""
-        self.cache_path.write_text(
+        """Write the internal cache dict to disk as JSON (atomic)."""
+        tmp_path = self.cache_path.with_suffix(self.cache_path.suffix + ".tmp")
+        tmp_path.write_text(
             json.dumps(self._cache, indent=2), encoding="utf-8"
         )
+        tmp_path.replace(self.cache_path)
 
     def get(self, condition_id: str) -> Optional[MarketCacheEntry]:
         """Look up a cached entry by conditionId."""
