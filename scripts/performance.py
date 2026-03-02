@@ -37,7 +37,10 @@ def cmd_summary(args):
 
     total_trades = len(opens)
     closed_trades = len(closes)
-    open_trades = total_trades - closed_trades
+
+    opened_ids = {e.position_id for e in opens if e.position_id}
+    closed_ids = {e.position_id for e in closes if e.position_id}
+    open_trades = len(opened_ids - closed_ids) if opened_ids else max(0, total_trades - closed_trades)
 
     wins = [e for e in closes if (e.pnl or 0) > 0]
     losses = [e for e in closes if (e.pnl or 0) < 0]
@@ -81,9 +84,10 @@ def cmd_summary(args):
 def cmd_trades(args):
     """Trade-by-trade breakdown."""
     journal = JournalStorage()
-    entries = journal.load_all(limit=args.limit)
-
+    entries = journal.load_all()
     trades = [e for e in entries if e.type in ("open", "close", "redeem", "merge")]
+    if args.limit is not None:
+        trades = trades[:args.limit]
     result = [asdict(e) for e in trades]
     print(json.dumps(result, indent=2))
     return 0
@@ -96,7 +100,7 @@ def cmd_chart(args):
 
     if len(snapshots) < 2:
         print(json.dumps({"error": "Need at least 2 snapshots. Run 'polyclaw portfolio snapshot' periodically."}))
-        return 0
+        return 1
 
     values = [s.total_value_usd for s in snapshots]
     dates = [s.timestamp[:10] for s in snapshots]
@@ -118,7 +122,7 @@ def cmd_chart(args):
     if val_range == 0:
         val_range = 1
 
-    print(f"Portfolio Value Chart")
+    print("Portfolio Value Chart")
     print(f"  ${max_val:.2f} |")
 
     for row in range(height - 1, -1, -1):

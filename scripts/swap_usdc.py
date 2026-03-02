@@ -93,8 +93,11 @@ def cmd_swap(args, token_in: str, token_out: str, direction: str):
         print(json.dumps({"error": f"No {label} to swap (balance: {available:.6f})"}))
         return 1
 
-    if args.amount:
+    if args.amount is not None:
         amount = args.amount
+        if amount <= 0:
+            print(json.dumps({"error": "Amount must be greater than 0"}))
+            return 1
         if amount > available:
             print(json.dumps({"error": f"Requested {amount:.2f} but only have {available:.2f}"}))
             return 1
@@ -103,7 +106,6 @@ def cmd_swap(args, token_in: str, token_out: str, direction: str):
 
     amount_wei = int(round(amount * 10**DECIMALS))
     slippage_pct = 2.0
-    min_out_wei = int(amount_wei * (1 - slippage_pct / 100))
 
     path = [Web3.to_checksum_address(token_in), Web3.to_checksum_address(token_out)]
     router_addr = Web3.to_checksum_address(CONTRACTS["QUICKSWAP_V2_ROUTER"])
@@ -111,7 +113,9 @@ def cmd_swap(args, token_in: str, token_out: str, direction: str):
 
     # Quote
     amounts_out = router.functions.getAmountsOut(amount_wei, path).call()
-    expected_out = amounts_out[1] / 10**DECIMALS
+    quoted_out_wei = amounts_out[1]
+    min_out_wei = int(quoted_out_wei * (1 - slippage_pct / 100))
+    expected_out = quoted_out_wei / 10**DECIMALS
     fee_pct = round((1 - expected_out / amount) * 100, 2)
 
     if args.dry_run:

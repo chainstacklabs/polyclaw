@@ -71,7 +71,8 @@ async def cmd_redeem(args):
             continue
 
         for pos in positions:
-            won = (pos["position"] == market.outcome)
+            outcome = (market.outcome or "").upper()
+            won = str(pos["position"]).upper() == outcome
             token_id = int(pos["token_id"])
             balance = ctf.functions.balanceOf(address, token_id).call()
 

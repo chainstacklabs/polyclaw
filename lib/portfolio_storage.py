@@ -64,10 +64,13 @@ class PortfolioStorage:
 
         for line in text.split("\n"):
             if line:
-                data = json.loads(line)
-                entries.append(PortfolioSnapshot(**data))
+                try:
+                    data = json.loads(line)
+                    entries.append(PortfolioSnapshot(**data))
+                except (json.JSONDecodeError, TypeError):
+                    continue
 
-        if limit:
+        if limit is not None:
             entries = entries[-limit:]
 
         return entries

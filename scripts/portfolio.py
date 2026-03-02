@@ -72,13 +72,17 @@ def cmd_status(args):
     positions_pct = 100 - cash_pct
 
     # Check rules compliance
+    min_cash_reserve = rules.get("min_cash_reserve_pct", 25)
+    max_exposure = rules.get("max_portfolio_exposure_pct", 75)
+    max_positions = rules.get("max_positions", 8)
+
     violations = []
-    if cash_pct < rules.get("min_cash_reserve_pct", 25):
-        violations.append(f"Cash {cash_pct:.0f}% < minimum {rules['min_cash_reserve_pct']}%")
-    if positions_pct > rules.get("max_portfolio_exposure_pct", 75):
-        violations.append(f"Exposure {positions_pct:.0f}% > maximum {rules['max_portfolio_exposure_pct']}%")
-    if position_count >= rules.get("max_positions", 8):
-        violations.append(f"Positions {position_count} >= maximum {rules['max_positions']}")
+    if cash_pct < min_cash_reserve:
+        violations.append(f"Cash {cash_pct:.0f}% < minimum {min_cash_reserve}%")
+    if positions_pct > max_exposure:
+        violations.append(f"Exposure {positions_pct:.0f}% > maximum {max_exposure}%")
+    if position_count > max_positions:
+        violations.append(f"Positions {position_count} > maximum {max_positions}")
 
     result = {
         "total_value_usd": round(total, 2),

@@ -57,12 +57,15 @@ class JournalStorage:
 
         for line in text.split("\n"):
             if line:
-                data = json.loads(line)
-                entries.append(JournalEntry(**data))
+                try:
+                    data = json.loads(line)
+                    entries.append(JournalEntry(**data))
+                except (json.JSONDecodeError, TypeError):
+                    continue
 
         entries.sort(key=lambda e: e.timestamp, reverse=True)
 
-        if limit:
+        if limit is not None:
             entries = entries[:limit]
 
         return entries

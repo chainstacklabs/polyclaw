@@ -96,7 +96,10 @@ def cmd_merge(args):
     print(f"YES tokens: {yes_bal / 1e6:.6f}")
     print(f"NO tokens:  {no_bal / 1e6:.6f}")
 
-    if args.amount:
+    if args.amount is not None:
+        if args.amount <= 0:
+            print(json.dumps({"error": "Amount must be greater than 0"}))
+            return 1
         amount_wei = int(round(args.amount * 1e6))
         if amount_wei > min(yes_bal, no_bal):
             print(json.dumps({

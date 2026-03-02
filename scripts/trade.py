@@ -305,18 +305,21 @@ async def cmd_buy(args):
             storage.add(position_entry)
             print(f"  Position ID: {position_entry.position_id[:12]}...")
 
-            # Auto-append journal entry
-            journal = JournalStorage()
-            journal_entry = JournalStorage.create_entry(
-                entry_type="open",
-                market_id=result.market_id,
-                position_id=position_entry.position_id,
-                side=result.position,
-                amount_usd=result.amount,
-                price=result.entry_price,
-                tx_hash=result.split_tx,
-            )
-            journal.append(journal_entry)
+            # Auto-append journal entry (best-effort, don't fail the trade)
+            try:
+                journal = JournalStorage()
+                journal_entry = JournalStorage.create_entry(
+                    entry_type="open",
+                    market_id=result.market_id,
+                    position_id=position_entry.position_id,
+                    side=result.position,
+                    amount_usd=result.amount,
+                    price=result.entry_price,
+                    tx_hash=result.split_tx,
+                )
+                journal.append(journal_entry)
+            except (OSError, ValueError, TypeError) as e:
+                print(f"Warning: failed to append journal entry: {e}", file=sys.stderr)
         else:
             print(f"Trade failed: {result.error}")
             return 1
