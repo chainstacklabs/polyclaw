@@ -75,22 +75,10 @@ async def cmd_redeem(args):
             token_id = int(pos["token_id"])
             balance = ctf.functions.balanceOf(address, token_id).call()
 
-            if balance == 0 and not won:
-                # Lost with no tokens
-                storage.update_exit(pos["position_id"], "resolved-lost")
-                storage.update_notes(pos["position_id"], f"Resolved: {market.outcome}. Position lost.")
-                resolved_lost.append({
-                    "position_id": pos["position_id"],
-                    "market_id": market_id,
-                    "question": market.question,
-                    "side": pos["position"],
-                    "outcome": "lost",
-                })
-                continue
-
             if not won:
-                storage.update_exit(pos["position_id"], "resolved-lost")
-                storage.update_notes(pos["position_id"], f"Resolved: {market.outcome}. Position lost.")
+                if not args.dry_run:
+                    storage.update_exit(pos["position_id"], "resolved-lost")
+                    storage.update_notes(pos["position_id"], f"Resolved: {market.outcome}. Position lost.")
                 resolved_lost.append({
                     "position_id": pos["position_id"],
                     "market_id": market_id,
@@ -120,13 +108,20 @@ async def cmd_redeem(args):
             neg_risk = pos.get("neg_risk", False) or market.neg_risk
 
             if neg_risk:
+                # amounts array: [outcome_0_amount, outcome_1_amount]
+                # YES = outcome 0, NO = outcome 1
+                if pos["position"] == "YES":
+                    amounts = [balance, 0]
+                else:
+                    amounts = [0, balance]
+
                 adapter = w3.eth.contract(
                     address=Web3.to_checksum_address(CONTRACTS["NEG_RISK_ADAPTER"]),
                     abi=NEG_RISK_ADAPTER_ABI,
                 )
                 tx = adapter.functions.redeemPositions(
                     condition_bytes,
-                    [balance, 0],  # amounts per outcome
+                    amounts,
                 ).build_transaction({
                     "from": address,
                     "nonce": nonce,

@@ -101,7 +101,7 @@ def cmd_swap(args, token_in: str, token_out: str, direction: str):
     else:
         amount = available
 
-    amount_wei = int(amount * 10**DECIMALS)
+    amount_wei = int(round(amount * 10**DECIMALS))
     slippage_pct = 2.0
     min_out_wei = int(amount_wei * (1 - slippage_pct / 100))
 

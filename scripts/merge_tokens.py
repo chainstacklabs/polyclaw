@@ -21,10 +21,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 
+import httpx
 from web3 import Web3
 
 from lib.wallet_manager import WalletManager
-from lib.gamma_client import GammaClient
 from lib.contracts import CONTRACTS, CTF_ABI, NEG_RISK_ADAPTER_ABI, POLYGON_CHAIN_ID
 
 
@@ -42,10 +42,8 @@ def get_token_id(condition_id: str, index: int) -> int:
 
 async def detect_neg_risk(condition_id: str) -> bool:
     """Try to detect if a market is neg-risk via Gamma API."""
-    gamma = GammaClient()
     try:
-        # Search by condition_id
-        async with __import__("httpx").AsyncClient(timeout=30) as http:
+        async with httpx.AsyncClient(timeout=30) as http:
             resp = await http.get(
                 "https://gamma-api.polymarket.com/markets",
                 params={"condition_id": condition_id},
@@ -67,6 +65,18 @@ def cmd_merge(args):
         return 1
 
     condition_id = args.condition_id
+
+    # Validate condition_id is valid hex
+    hex_str = condition_id[2:] if condition_id.startswith("0x") else condition_id
+    try:
+        bytes.fromhex(hex_str)
+    except ValueError:
+        print(json.dumps({"error": "Condition ID not found"}))
+        return 1
+    if len(hex_str) != 64:
+        print(json.dumps({"error": "Condition ID not found"}))
+        return 1
+
     w3 = Web3(Web3.HTTPProvider(wallet.rpc_url, request_kwargs={"timeout": 60, "proxies": {}}))
     address = Web3.to_checksum_address(wallet.address)
     account = w3.eth.account.from_key(wallet.get_unlocked_key())
@@ -87,7 +97,7 @@ def cmd_merge(args):
     print(f"NO tokens:  {no_bal / 1e6:.6f}")
 
     if args.amount:
-        amount_wei = int(args.amount * 1e6)
+        amount_wei = int(round(args.amount * 1e6))
         if amount_wei > min(yes_bal, no_bal):
             print(json.dumps({
                 "error": f"Requested ${args.amount} but max mergeable is ${min(yes_bal, no_bal) / 1e6:.6f}",

@@ -141,7 +141,11 @@ def cmd_chart(args):
     print(f"           +{'-' * len(sampled_values)}")
     pad = max(0, len(sampled_values) - len(sampled_dates[0]) - len(sampled_dates[-1]))
     print(f"            {sampled_dates[0]}{' ' * pad}{sampled_dates[-1]}")
-    print(f"\n  {len(snapshots)} snapshots | ${values[0]:.2f} -> ${values[-1]:.2f} ({(values[-1]/values[0]-1)*100:+.1f}%)")
+    if values[0] > 0:
+        change_pct = (values[-1] / values[0] - 1) * 100
+        print(f"\n  {len(snapshots)} snapshots | ${values[0]:.2f} -> ${values[-1]:.2f} ({change_pct:+.1f}%)")
+    else:
+        print(f"\n  {len(snapshots)} snapshots | ${values[0]:.2f} -> ${values[-1]:.2f}")
 
     return 0
 
