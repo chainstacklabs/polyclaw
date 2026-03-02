@@ -43,7 +43,7 @@ async def cmd_summary(args):
 
     # Classify positions
     open_positions = [p for p in positions if p.amount > 0]
-    closed_positions = [p for p in positions if p.amount == 0 and p.realized_pnl != 0]
+    closed_positions = [p for p in positions if p.amount == 0]
 
     total_trades = len(open_positions) + len(closed_positions)
     open_trades = len(open_positions)
@@ -54,7 +54,8 @@ async def cmd_summary(args):
     breakeven = [p for p in closed_positions if p.realized_pnl == 0]
 
     total_pnl = sum(p.realized_pnl for p in closed_positions)
-    win_rate = len(wins) / closed_trades if closed_trades > 0 else 0
+    decisive_trades = len(wins) + len(losses)
+    win_rate = len(wins) / decisive_trades if decisive_trades > 0 else 0
 
     gross_profit = sum(p.realized_pnl for p in wins) if wins else 0
     gross_loss = abs(sum(p.realized_pnl for p in losses)) if losses else 0
@@ -107,6 +108,9 @@ async def cmd_trades(args):
         return 1
 
     if args.limit is not None:
+        if args.limit < 0:
+            print(json.dumps({"error": "--limit must be >= 0"}))
+            return 1
         events = events[:args.limit]
 
     # Pre-populate cache from position token_ids (reliable Gamma lookup),

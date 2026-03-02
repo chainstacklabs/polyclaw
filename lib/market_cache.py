@@ -99,6 +99,7 @@ class MarketCache:
         clob_token_ids filter is reliable, unlike the conditionId filter.
         """
         seen: set[str] = set()
+        staged: dict[str, MarketCacheEntry] = {}
         for token_id in token_ids:
             if token_id in seen:
                 continue
@@ -108,18 +109,19 @@ class MarketCache:
             except Exception:
                 continue
             if market.condition_id and self.get(market.condition_id) is None:
-                self.put(
-                    market.condition_id,
-                    MarketCacheEntry(
-                        condition_id=market.condition_id,
-                        market_id=market.id,
-                        question=market.question,
-                        slug=market.slug,
-                        yes_token_id=market.yes_token_id,
-                        no_token_id=market.no_token_id or "",
-                        cached_at=datetime.now(timezone.utc).isoformat(),
-                    ),
+                staged[market.condition_id] = MarketCacheEntry(
+                    condition_id=market.condition_id,
+                    market_id=market.id,
+                    question=market.question,
+                    slug=market.slug,
+                    yes_token_id=market.yes_token_id,
+                    no_token_id=market.no_token_id or "",
+                    cached_at=datetime.now(timezone.utc).isoformat(),
                 )
+
+        if staged:
+            self._cache.update({cid: asdict(e) for cid, e in staged.items()})
+            self._save()
 
     async def resolve_batch(
         self, condition_ids: list[str], gamma: "GammaClient"

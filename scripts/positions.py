@@ -66,7 +66,8 @@ async def enrich_positions(
     for token_id in token_ids_to_resolve:
         try:
             market = await gamma.get_market_by_token(token_id)
-        except Exception:
+        except Exception as e:
+            print(f"Warning: Failed to resolve market for token {token_id[:12]}: {e}", file=sys.stderr)
             continue
         resolved[token_id] = {
             "condition_id": market.condition_id,
@@ -146,8 +147,8 @@ async def cmd_list(args):
     if open_token_ids:
         try:
             prices = await gamma.get_prices(open_token_ids)
-        except Exception:
-            pass  # Prices unavailable; will show 0
+        except Exception as e:
+            print(f"Warning: Price fetch failed, values will show $0: {e}", file=sys.stderr)
 
     results = []
     total_pnl = 0.0

@@ -188,9 +188,12 @@ class GammaClient:
                 )
                 if resp.status_code == 200:
                     data = resp.json()
-                    prices[token_id] = float(data.get("mid", 0))
+                    mid = data.get("mid")
+                    if mid in (None, ""):
+                        return
+                    prices[token_id] = float(mid)
                 # 404 = resolved market, no orderbook — skip silently
-            except (httpx.HTTPError, ValueError, KeyError):
+            except (httpx.HTTPError, ValueError, TypeError, KeyError):
                 pass
 
         async with httpx.AsyncClient(timeout=self.timeout) as http:

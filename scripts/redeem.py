@@ -95,7 +95,17 @@ async def cmd_redeem(args):
             continue
 
         for pos, market in entries:
-            side = "YES" if pos.token_id == market.yes_token_id else "NO"
+            if pos.token_id == market.yes_token_id:
+                side = "YES"
+            elif market.no_token_id and pos.token_id == market.no_token_id:
+                side = "NO"
+            else:
+                print(
+                    f"Token {pos.token_id[:12]} does not match YES/NO tokens for market {market_id}",
+                    file=sys.stderr,
+                )
+                unchanged += 1
+                continue
             outcome = (market.outcome or "").upper()
             won = side == outcome
             try:

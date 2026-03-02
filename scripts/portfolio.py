@@ -31,12 +31,12 @@ from lib.market_cache import MarketCache
 
 
 async def get_positions_value(wallet_address: str) -> tuple[float, int]:
-    """Calculate total open positions market value. Returns (value_usd, count)."""
-    try:
-        client = SubgraphClient(wallet_address)
-        positions = await client.get_open_positions()
-    except SubgraphError:
-        return 0.0, 0
+    """Calculate total open positions market value. Returns (value_usd, count).
+
+    Raises SubgraphError if the subgraph is unreachable.
+    """
+    client = SubgraphClient(wallet_address)
+    positions = await client.get_open_positions()
 
     if not positions:
         return 0.0, 0
@@ -69,7 +69,12 @@ async def cmd_status(args):
     portfolio_storage = PortfolioStorage()
     rules = portfolio_storage.load_rules()
 
-    positions_usd, position_count = await get_positions_value(wallet.address)
+    try:
+        positions_usd, position_count = await get_positions_value(wallet.address)
+    except SubgraphError as e:
+        print(json.dumps({"error": f"Failed to fetch open positions: {e}"}))
+        return 1
+
     cash = balances.usdc + balances.usdc_e
     total = cash + positions_usd
     cash_pct = (cash / total * 100) if total > 0 else 100
@@ -132,6 +137,9 @@ async def cmd_history(args):
         return 1
 
     if args.limit is not None:
+        if args.limit < 0:
+            print(json.dumps({"error": "--limit must be >= 0"}))
+            return 1
         events = events[:args.limit]
 
     # Pre-populate cache from position token_ids (reliable Gamma lookup),
@@ -175,7 +183,12 @@ async def cmd_snapshot(args):
 
     balances = wallet.get_balances()
 
-    positions_usd, position_count = await get_positions_value(wallet.address)
+    try:
+        positions_usd, position_count = await get_positions_value(wallet.address)
+    except SubgraphError as e:
+        print(json.dumps({"error": f"Failed to fetch open positions: {e}"}))
+        return 1
+
     cash = balances.usdc + balances.usdc_e
     total = cash + positions_usd
     cash_pct = (cash / total * 100) if total > 0 else 100

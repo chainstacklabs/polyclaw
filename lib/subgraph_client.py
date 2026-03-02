@@ -1,6 +1,7 @@
 """Polymarket Goldsky subgraph client for activity and PnL queries."""
 
 import asyncio
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -100,7 +101,13 @@ class SubgraphClient:
                     f"Subgraph returned status {resp.status_code}: {resp.text}"
                 )
 
-            body = resp.json()
+            try:
+                body = resp.json()
+            except (ValueError, json.JSONDecodeError) as exc:
+                raise SubgraphError(
+                    f"Invalid JSON response: {resp.text[:200]}"
+                ) from exc
+
             if "errors" in body:
                 errors = body["errors"]
                 msg = (
@@ -124,6 +131,8 @@ class SubgraphClient:
 
     async def get_splits(self, limit: int = 1000) -> list[TradeEvent]:
         """Fetch split events for the wallet from the activity subgraph."""
+        if limit <= 0:
+            raise ValueError("limit must be > 0")
         query = """
         query GetSplits($wallet: String!, $limit: Int!, $cursor: String!) {
             splits(
@@ -171,6 +180,8 @@ class SubgraphClient:
 
     async def get_merges(self, limit: int = 1000) -> list[TradeEvent]:
         """Fetch merge events for the wallet from the activity subgraph."""
+        if limit <= 0:
+            raise ValueError("limit must be > 0")
         query = """
         query GetMerges($wallet: String!, $limit: Int!, $cursor: String!) {
             merges(
@@ -218,6 +229,8 @@ class SubgraphClient:
 
     async def get_redemptions(self, limit: int = 1000) -> list[TradeEvent]:
         """Fetch redemption events for the wallet from the activity subgraph."""
+        if limit <= 0:
+            raise ValueError("limit must be > 0")
         query = """
         query GetRedemptions($wallet: String!, $limit: Int!, $cursor: String!) {
             redemptions(
@@ -295,6 +308,8 @@ class SubgraphClient:
 
     async def get_positions(self, limit: int = 1000) -> list[UserPosition]:
         """Fetch all positions for the wallet from the PnL subgraph."""
+        if limit <= 0:
+            raise ValueError("limit must be > 0")
         query = """
         query GetPositions($wallet: String!, $limit: Int!, $cursor: String!) {
             userPositions(
