@@ -18,6 +18,7 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 
 from lib.position_storage import PositionStorage, PositionEntry
 from lib.gamma_client import GammaClient
+from lib.action_logger import ActionLogger
 
 
 def format_pnl(value: float) -> str:
@@ -176,77 +177,106 @@ async def cmd_show(args):
 
 def cmd_add(args):
     """Manually add a position (for testing or importing)."""
-    storage = PositionStorage()
+    with ActionLogger("positions.add", {
+        "market_id": args.market_id,
+        "position": args.position,
+        "amount": args.amount,
+    }) as log:
+        storage = PositionStorage()
 
-    entry = PositionEntry(
-        position_id=str(uuid.uuid4()),
-        market_id=args.market_id,
-        question=args.question or "Manual entry",
-        position=args.position.upper(),
-        token_id=args.token_id or "",
-        entry_time=datetime.utcnow().isoformat(),
-        entry_amount=args.amount,
-        entry_price=args.price,
-        split_tx=args.tx or "manual",
-        clob_order_id=None,
-        clob_filled=False,
-        status="open",
-    )
+        entry = PositionEntry(
+            position_id=str(uuid.uuid4()),
+            market_id=args.market_id,
+            question=args.question or "Manual entry",
+            position=args.position.upper(),
+            token_id=args.token_id or "",
+            entry_time=datetime.utcnow().isoformat(),
+            entry_amount=args.amount,
+            entry_price=args.price,
+            split_tx=args.tx or "manual",
+            clob_order_id=None,
+            clob_filled=False,
+            status="open",
+        )
 
-    storage.add(entry)
-    print(f"Position added: {entry.position_id[:12]}")
-    return 0
+        storage.add(entry)
+        log.set_details({
+            "position_id": entry.position_id,
+            "market_id": entry.market_id,
+        })
+        log.success()
+
+        print(f"Position added: {entry.position_id[:12]}")
+        return 0
 
 
 def cmd_close(args):
     """Close a position (mark as closed)."""
-    storage = PositionStorage()
+    with ActionLogger("positions.close", {"position_id": args.position_id}) as log:
+        storage = PositionStorage()
 
-    # Find by prefix
-    positions = storage.load_all()
-    matches = [p for p in positions if p["position_id"].startswith(args.position_id)]
+        # Find by prefix
+        positions = storage.load_all()
+        matches = [p for p in positions if p["position_id"].startswith(args.position_id)]
 
-    if not matches:
-        print(f"Position not found: {args.position_id}")
-        return 1
+        if not matches:
+            log.failure("Position not found")
+            print(f"Position not found: {args.position_id}")
+            return 1
 
-    if len(matches) > 1:
-        print(f"Multiple matches, be more specific")
-        return 1
+        if len(matches) > 1:
+            log.failure("Multiple matches")
+            print(f"Multiple matches, be more specific")
+            return 1
 
-    pos = matches[0]
-    storage.update_status(pos["position_id"], "closed")
-    print(f"Position closed: {pos['position_id'][:12]}")
-    return 0
+        pos = matches[0]
+        storage.update_status(pos["position_id"], "closed")
+        log.set_details({
+            "position_id": pos["position_id"],
+            "market_id": pos["market_id"],
+        })
+        log.success()
+        print(f"Position closed: {pos['position_id'][:12]}")
+        return 0
 
 
 def cmd_delete(args):
     """Delete a position record."""
-    storage = PositionStorage()
+    with ActionLogger("positions.delete", {"position_id": args.position_id}) as log:
+        storage = PositionStorage()
 
-    # Find by prefix
-    positions = storage.load_all()
-    matches = [p for p in positions if p["position_id"].startswith(args.position_id)]
+        # Find by prefix
+        positions = storage.load_all()
+        matches = [p for p in positions if p["position_id"].startswith(args.position_id)]
 
-    if not matches:
-        print(f"Position not found: {args.position_id}")
-        return 1
-
-    if len(matches) > 1:
-        print(f"Multiple matches, be more specific")
-        return 1
-
-    pos = matches[0]
-
-    if not args.force:
-        confirm = input(f"Delete position {pos['position_id'][:12]}? [y/N]: ")
-        if confirm.lower() != "y":
-            print("Aborted")
+        if not matches:
+            log.failure("Position not found")
+            print(f"Position not found: {args.position_id}")
             return 1
 
-    storage.delete(pos["position_id"])
-    print(f"Position deleted: {pos['position_id'][:12]}")
-    return 0
+        if len(matches) > 1:
+            log.failure("Multiple matches")
+            print(f"Multiple matches, be more specific")
+            return 1
+
+        pos = matches[0]
+
+        if not args.force:
+            confirm = input(f"Delete position {pos['position_id'][:12]}? [y/N]: ")
+            if confirm.lower() != "y":
+                log.set_details({"cancelled": True})
+                log.success()
+                print("Aborted")
+                return 1
+
+        storage.delete(pos["position_id"])
+        log.set_details({
+            "position_id": pos["position_id"],
+            "market_id": pos["market_id"],
+        })
+        log.success()
+        print(f"Position deleted: {pos['position_id'][:12]}")
+        return 0
 
 
 def main():

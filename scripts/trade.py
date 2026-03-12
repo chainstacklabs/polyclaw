@@ -26,6 +26,7 @@ from lib.gamma_client import GammaClient, Market
 from lib.clob_client import ClobClientWrapper
 from lib.contracts import CONTRACTS, CTF_ABI, POLYGON_CHAIN_ID
 from lib.position_storage import PositionStorage, PositionEntry
+from lib.action_logger import ActionLogger
 
 
 @dataclass
@@ -240,71 +241,91 @@ class TradeExecutor:
 
 async def cmd_buy(args):
     """Execute buy command."""
-    wallet = WalletManager()
+    with ActionLogger("trade.buy", {
+        "market_id": args.market_id,
+        "position": args.position,
+        "amount": args.amount,
+        "skip_sell": args.skip_sell,
+    }) as log:
+        wallet = WalletManager()
 
-    if not wallet.is_unlocked:
-        print("Error: No wallet configured")
-        print("Set POLYCLAW_PRIVATE_KEY environment variable.")
-        return 1
-
-    try:
-        executor = TradeExecutor(wallet)
-        result = await executor.buy_position(
-            args.market_id,
-            args.position,
-            args.amount,
-            skip_clob_sell=args.skip_sell,
-        )
-
-        print("\n" + "=" * 50)
-        if result.success:
-            print("Trade executed successfully!")
-            print(f"  Market: {result.question[:50]}...")
-            print(f"  Position: {result.position}")
-            print(f"  Amount: ${result.amount:.2f}")
-            print(f"  Split TX: {result.split_tx}")
-            if result.clob_filled:
-                print(f"  CLOB Order: {result.clob_order_id} (FILLED)")
-            elif result.clob_order_id:
-                print(f"  CLOB Order: {result.clob_order_id} (pending)")
-            elif args.skip_sell:
-                print(f"  CLOB: Skipped (--skip-sell)")
-                print(f"  Note: You have both YES and NO tokens")
-            else:
-                print(f"  CLOB: Failed - {result.error}")
-                unwanted = "NO" if result.position == "YES" else "YES"
-                print(f"  Note: You have {result.amount:.0f} {unwanted} tokens to sell manually")
-
-            # Record position
-            storage = PositionStorage()
-            position_entry = PositionEntry(
-                position_id=str(uuid.uuid4()),
-                market_id=result.market_id,
-                question=result.question,
-                position=result.position,
-                token_id=result.wanted_token_id,
-                entry_time=datetime.now(timezone.utc).isoformat(),
-                entry_amount=result.amount,
-                entry_price=result.entry_price,
-                split_tx=result.split_tx,
-                clob_order_id=result.clob_order_id,
-                clob_filled=result.clob_filled,
-            )
-            storage.add(position_entry)
-            print(f"  Position ID: {position_entry.position_id[:12]}...")
-        else:
-            print(f"Trade failed: {result.error}")
+        if not wallet.is_unlocked:
+            log.failure("No wallet configured")
+            print("Error: No wallet configured")
+            print("Set POLYCLAW_PRIVATE_KEY environment variable.")
             return 1
 
-        # Output JSON if requested
-        if args.json:
-            print("\nJSON Result:")
-            print(json.dumps(asdict(result), indent=2))
+        try:
+            executor = TradeExecutor(wallet)
+            result = await executor.buy_position(
+                args.market_id,
+                args.position,
+                args.amount,
+                skip_clob_sell=args.skip_sell,
+            )
 
-        return 0
+            print("\n" + "=" * 50)
+            if result.success:
+                log.set_details({
+                    "market_id": result.market_id,
+                    "question": result.question[:50] if result.question else "",
+                    "position": result.position,
+                    "amount": result.amount,
+                    "split_tx": result.split_tx,
+                    "clob_order_id": result.clob_order_id,
+                    "clob_filled": result.clob_filled,
+                    "entry_price": result.entry_price,
+                })
+                log.success()
 
-    finally:
-        wallet.lock()
+                print("Trade executed successfully!")
+                print(f"  Market: {result.question[:50]}...")
+                print(f"  Position: {result.position}")
+                print(f"  Amount: ${result.amount:.2f}")
+                print(f"  Split TX: {result.split_tx}")
+                if result.clob_filled:
+                    print(f"  CLOB Order: {result.clob_order_id} (FILLED)")
+                elif result.clob_order_id:
+                    print(f"  CLOB Order: {result.clob_order_id} (pending)")
+                elif args.skip_sell:
+                    print(f"  CLOB: Skipped (--skip-sell)")
+                    print(f"  Note: You have both YES and NO tokens")
+                else:
+                    print(f"  CLOB: Failed - {result.error}")
+                    unwanted = "NO" if result.position == "YES" else "YES"
+                    print(f"  Note: You have {result.amount:.0f} {unwanted} tokens to sell manually")
+
+                # Record position
+                storage = PositionStorage()
+                position_entry = PositionEntry(
+                    position_id=str(uuid.uuid4()),
+                    market_id=result.market_id,
+                    question=result.question,
+                    position=result.position,
+                    token_id=result.wanted_token_id,
+                    entry_time=datetime.now(timezone.utc).isoformat(),
+                    entry_amount=result.amount,
+                    entry_price=result.entry_price,
+                    split_tx=result.split_tx,
+                    clob_order_id=result.clob_order_id,
+                    clob_filled=result.clob_filled,
+                )
+                storage.add(position_entry)
+                print(f"  Position ID: {position_entry.position_id[:12]}...")
+            else:
+                log.failure(result.error or "Unknown error")
+                print(f"Trade failed: {result.error}")
+                return 1
+
+            # Output JSON if requested
+            if args.json:
+                print("\nJSON Result:")
+                print(json.dumps(asdict(result), indent=2))
+
+            return 0
+
+        finally:
+            wallet.lock()
 
 
 def main():
