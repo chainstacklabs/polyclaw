@@ -175,6 +175,12 @@ class ActionLogger:
     """
 
     def __init__(self, action: str, params: dict):
+        """Initialize the action logger.
+
+        Args:
+            action: Action type (e.g., "markets.trending", "trade.buy").
+            params: Input parameters to log.
+        """
         self.action = action
         self.params = params
         self.details: dict = {}
@@ -195,9 +201,17 @@ class ActionLogger:
         self.details["error"] = error
 
     def __enter__(self) -> "ActionLogger":
+        """Enter the context manager, returning self for use in the with block."""
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Exit the context manager, logging the action with duration and result.
+
+        Args:
+            exc_type: Exception type if an exception was raised, else None.
+            exc_val: Exception value if an exception was raised, else None.
+            exc_tb: Exception traceback if an exception was raised, else None.
+        """
         duration_ms = int((time.perf_counter() - self.start_time) * 1000)
 
         if exc_type is not None:

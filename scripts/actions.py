@@ -117,6 +117,7 @@ def cmd_files(args):
 
 
 def main():
+    """Main entry point for the actions CLI command."""
     parser = argparse.ArgumentParser(description="View action logs")
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
