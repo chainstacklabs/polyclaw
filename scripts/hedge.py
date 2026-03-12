@@ -376,7 +376,7 @@ async def cmd_scan(args):
         gamma = GammaClient()
 
         # Fetch markets
-        print(f"Fetching markets...", file=sys.stderr)
+        print("Fetching markets...", file=sys.stderr)
         if args.query:
             markets = await gamma.search_markets(args.query, limit=args.limit)
             print(f"Found {len(markets)} markets matching '{args.query}'", file=sys.stderr)
@@ -457,7 +457,7 @@ async def cmd_analyze(args):
 
         # Fetch both markets
         try:
-            print(f"Fetching markets...", file=sys.stderr)
+            print("Fetching markets...", file=sys.stderr)
             market1 = await gamma.get_market(args.market_id_1)
             market2 = await gamma.get_market(args.market_id_2)
         except Exception as e:
@@ -480,7 +480,7 @@ async def cmd_analyze(args):
 
         try:
             # Check both directions
-            print(f"\nAnalyzing implications...", file=sys.stderr)
+            print("\nAnalyzing implications...", file=sys.stderr)
 
             # Market 1 as target
             covers1 = await extract_implications_for_market(market1, [market2], llm)

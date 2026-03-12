@@ -226,7 +226,7 @@ def cmd_close(args):
 
         if len(matches) > 1:
             log.failure("Multiple matches")
-            print(f"Multiple matches, be more specific")
+            print("Multiple matches, be more specific")
             return 1
 
         pos = matches[0]
@@ -256,7 +256,7 @@ def cmd_delete(args):
 
         if len(matches) > 1:
             log.failure("Multiple matches")
-            print(f"Multiple matches, be more specific")
+            print("Multiple matches, be more specific")
             return 1
 
         pos = matches[0]

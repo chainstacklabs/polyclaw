@@ -5,7 +5,6 @@ import sys
 import json
 import asyncio
 import argparse
-import time
 from pathlib import Path
 
 # Add parent to path for lib imports
@@ -63,7 +62,7 @@ async def cmd_trending(args):
             print(f"{'ID':<12} {'YES':>6} {'NO':>6} {'24h Vol':>10} {'Question'}")
             print("-" * 80)
             for m in markets:
-                question = m.question if args.full else (m.question[:60] + "..." if len(m.question) > 60 else m.question)
+                question = m.question if trunc == 0 else (m.question[:trunc] + "..." if len(m.question) > trunc else m.question)
                 print(f"{m.id[:12]:<12} {format_price(m.yes_price):>6} {format_price(m.no_price):>6} {format_volume(m.volume_24h):>10} {question}")
 
 

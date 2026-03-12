@@ -55,16 +55,13 @@ def sanitize_value(value: Any, key: str = "") -> Any:
     - password, secret
     - api_key, OPENROUTER_API_KEY
     """
-    sensitive_keys = {
-        "private_key", "POLYCLAW_PRIVATE_KEY",
-        "password", "secret",
-        "api_key", "OPENROUTER_API_KEY",
-    }
+    # Sensitive substrings to check in key names
+    sensitive_substrings = ["private", "secret", "password", "api_key"]
 
     key_lower = key.lower()
 
     # Check if this key is sensitive
-    if any(s in key_lower for s in ["private", "secret", "password", "api_key"]):
+    if any(s in key_lower for s in sensitive_substrings):
         if isinstance(value, str) and len(value) > 10:
             # Show prefix and suffix
             if value.startswith("0x"):

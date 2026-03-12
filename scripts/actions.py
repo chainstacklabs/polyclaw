@@ -90,10 +90,7 @@ def cmd_show(args):
 
     entry = actions[args.index]
 
-    if getattr(args, 'json', False):
-        print(json.dumps(entry, indent=2))
-    else:
-        print(json.dumps(entry, indent=2))
+    print(json.dumps(entry, indent=2))
     return 0
 
 
@@ -147,6 +144,10 @@ def main():
         return cmd_files(args)
     else:
         # Default to list
+        args.json = False
+        args.type = None
+        args.date = None
+        args.limit = 20
         return cmd_list(args)
 
 

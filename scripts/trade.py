@@ -288,8 +288,8 @@ async def cmd_buy(args):
                 elif result.clob_order_id:
                     print(f"  CLOB Order: {result.clob_order_id} (pending)")
                 elif args.skip_sell:
-                    print(f"  CLOB: Skipped (--skip-sell)")
-                    print(f"  Note: You have both YES and NO tokens")
+                    print("  CLOB: Skipped (--skip-sell)")
+                    print("  Note: You have both YES and NO tokens")
                 else:
                     print(f"  CLOB: Failed - {result.error}")
                     unwanted = "NO" if result.position == "YES" else "YES"
