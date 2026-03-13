@@ -197,6 +197,16 @@ class ActionLogger:
         self.result = "failure"
         self.details["error"] = error
 
+    def cancelled(self, reason: str = "") -> None:
+        """Mark the action as cancelled by user.
+
+        Args:
+            reason: Optional reason for cancellation.
+        """
+        self.result = "cancelled"
+        if reason:
+            self.details["reason"] = reason
+
     def __enter__(self) -> "ActionLogger":
         """Enter the context manager, returning self for use in the with block."""
         return self

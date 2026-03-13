@@ -265,7 +265,7 @@ def cmd_delete(args):
             confirm = input(f"Delete position {pos['position_id'][:12]}? [y/N]: ")
             if confirm.lower() != "y":
                 log.set_details({"cancelled": True})
-                log.success()
+                log.cancelled("User aborted deletion")
                 print("Aborted")
                 return 1
 

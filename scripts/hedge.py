@@ -14,6 +14,8 @@ import asyncio
 import argparse
 from pathlib import Path
 
+import httpx
+
 # Add parent to path for lib imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -459,8 +461,16 @@ async def cmd_analyze(args):
             print("Fetching markets...", file=sys.stderr)
             market1 = await gamma.get_market(args.market_id_1)
             market2 = await gamma.get_market(args.market_id_2)
-        except Exception as e:
-            log.failure(str(e))
+        except asyncio.TimeoutError as e:
+            log.failure(f"Timeout: {e}")
+            print(f"Error fetching markets: Timeout")
+            return 1
+        except httpx.HTTPStatusError as e:
+            log.failure(f"HTTP error: {e}")
+            print(f"Error fetching markets: {e}")
+            return 1
+        except httpx.RequestError as e:
+            log.failure(f"Network error: {e}")
             print(f"Error fetching markets: {e}")
             return 1
 

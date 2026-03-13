@@ -86,10 +86,11 @@ async def cmd_search(args):
             print(json.dumps([format_market_row(m) for m in markets], indent=2))
         else:
             # Terminal output: truncate unless --full
+            trunc = 0 if args.full else 60
             print(f"{'ID':<12} {'YES':>6} {'NO':>6} {'24h Vol':>10} {'Question'}")
             print("-" * 80)
             for m in markets:
-                question = m.question if args.full else (m.question[:60] + "..." if len(m.question) > 60 else m.question)
+                question = m.question if trunc == 0 else (m.question[:trunc] + "..." if len(m.question) > trunc else m.question)
                 print(f"{m.id[:12]:<12} {format_price(m.yes_price):>6} {format_price(m.no_price):>6} {format_volume(m.volume_24h):>10} {question}")
 
 
