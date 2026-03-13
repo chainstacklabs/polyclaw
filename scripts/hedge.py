@@ -385,8 +385,7 @@ async def cmd_scan(args):
             print(f"Got {len(markets)} trending markets", file=sys.stderr)
 
         if len(markets) < 2:
-            log.set_details({"markets_count": len(markets), "error": "Need at least 2 markets"})
-            log.success()
+            log.failure("Need at least 2 markets")
             print("Need at least 2 markets to find hedges")
             return 1
 

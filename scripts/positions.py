@@ -6,7 +6,7 @@ import json
 import asyncio
 import argparse
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Add parent to path for lib imports
@@ -190,7 +190,7 @@ def cmd_add(args):
             question=args.question or "Manual entry",
             position=args.position.upper(),
             token_id=args.token_id or "",
-            entry_time=datetime.utcnow().isoformat(),
+            entry_time=datetime.now(timezone.utc).isoformat(),
             entry_amount=args.amount,
             entry_price=args.price,
             split_tx=args.tx or "manual",

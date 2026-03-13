@@ -100,15 +100,26 @@ def cmd_files(args):
     log_files = sorted(logs_dir.glob("actions-*.jsonl"), reverse=True)
 
     if not log_files:
-        print("No log files found.")
+        if getattr(args, 'json', False):
+            print(json.dumps([]))
+        else:
+            print("No log files found.")
+        return 0
+
+    # Build file data
+    file_data = []
+    for f in log_files:
+        with open(f) as fp:
+            count = sum(1 for _ in fp)
+        file_data.append({"name": f.stem, "count": count})
+
+    if getattr(args, 'json', False):
+        print(json.dumps(file_data, indent=2))
         return 0
 
     print("Available log files:")
-    for f in log_files:
-        # Count lines
-        with open(f) as fp:
-            count = sum(1 for _ in fp)
-        print(f"  {f.stem} ({count} actions)")
+    for fd in file_data:
+        print(f"  {fd['name']} ({fd['count']} actions)")
 
     return 0
 

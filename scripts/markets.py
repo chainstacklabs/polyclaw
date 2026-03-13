@@ -77,7 +77,7 @@ async def cmd_search(args):
         if not markets:
             log.success()
             print(f"No markets found for: {args.query}")
-            return 1
+            return 0
 
         log.success()
 
