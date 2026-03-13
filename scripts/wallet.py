@@ -14,58 +14,80 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 from lib.wallet_manager import WalletManager
+from lib.action_logger import ActionLogger
 
 
 def cmd_status(args):
     """Show wallet status."""
-    manager = WalletManager()
+    with ActionLogger("wallet.status", {}) as log:
+        manager = WalletManager()
 
-    if not manager.address:
-        print("No wallet configured.")
-        print("Set POLYCLAW_PRIVATE_KEY environment variable.")
-        return 1
+        if not manager.address:
+            log.set_details({"configured": False})
+            log.success()
+            print("No wallet configured.")
+            print("Set POLYCLAW_PRIVATE_KEY environment variable.")
+            return 1
 
-    result = {
-        "address": manager.address,
-        "unlocked": manager.is_unlocked,
-    }
-
-    try:
-        result["approvals_set"] = manager.check_approvals()
-        balances = manager.get_balances()
-        result["balances"] = {
-            "POL": f"{balances.pol:.6f}",
-            "USDC.e": f"{balances.usdc_e:.6f}",
+        result = {
+            "address": manager.address,
+            "unlocked": manager.is_unlocked,
         }
-    except Exception as e:
-        result["approvals_set"] = "unknown"
-        result["balances"] = f"Unable to fetch: {e}"
 
-    print(json.dumps(result, indent=2))
-    return 0
+        try:
+            result["approvals_set"] = manager.check_approvals()
+            balances = manager.get_balances()
+            result["balances"] = {
+                "POL": f"{balances.pol:.6f}",
+                "USDC.e": f"{balances.usdc_e:.6f}",
+            }
+            log.set_details({
+                "address": manager.address,
+                "approvals_set": result["approvals_set"],
+                "pol_balance": balances.pol,
+                "usdc_e_balance": balances.usdc_e,
+            })
+            log.success()
+        except Exception as e:
+            result["approvals_set"] = "unknown"
+            result["balances"] = f"Unable to fetch: {e}"
+            log.set_details({"address": manager.address, "error": str(e)})
+            log.success()  # Still success, just couldn't fetch balances
+
+        print(json.dumps(result, indent=2))
+        return 0
 
 
 def cmd_approve(args):
     """Set Polymarket contract approvals."""
-    manager = WalletManager()
+    with ActionLogger("wallet.approve", {}) as log:
+        manager = WalletManager()
 
-    if not manager.address:
-        print("Error: No wallet configured")
-        print("Set POLYCLAW_PRIVATE_KEY environment variable.")
-        return 1
+        if not manager.address:
+            log.failure("No wallet configured")
+            print("Error: No wallet configured")
+            print("Set POLYCLAW_PRIVATE_KEY environment variable.")
+            return 1
 
-    print("Setting contract approvals...")
-    print("This will submit 6 transactions to Polygon.")
+        print("Setting contract approvals...")
+        print("This will submit 6 transactions to Polygon.")
 
-    try:
-        tx_hashes = manager.set_approvals()
-        print("Approvals set successfully!")
-        for i, tx in enumerate(tx_hashes, 1):
-            print(f"  {i}. {tx}")
-        return 0
-    except Exception as e:
-        print(f"Error: {e}")
-        return 1
+        try:
+            tx_hashes = manager.set_approvals()
+            log.set_details({
+                "address": manager.address,
+                "tx_count": len(tx_hashes),
+                "tx_hashes": tx_hashes,
+            })
+            log.success()
+            print("Approvals set successfully!")
+            for i, tx in enumerate(tx_hashes, 1):
+                print(f"  {i}. {tx}")
+            return 0
+        except Exception as e:
+            log.failure(str(e))
+            print(f"Error: {e}")
+            return 1
 
 
 def main():

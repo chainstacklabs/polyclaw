@@ -14,6 +14,8 @@ import asyncio
 import argparse
 from pathlib import Path
 
+import httpx
+
 # Add parent to path for lib imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -30,6 +32,7 @@ from lib.coverage import (
     filter_portfolios_by_coverage,
     sort_portfolios,
 )
+from lib.action_logger import ActionLogger
 
 
 # =============================================================================
@@ -366,140 +369,176 @@ def print_portfolios_json(portfolios: list[dict]) -> None:
 
 async def cmd_scan(args):
     """Scan markets for hedging opportunities."""
-    gamma = GammaClient()
+    with ActionLogger("hedge.scan", {
+        "query": args.query,
+        "limit": args.limit,
+        "min_coverage": args.min_coverage,
+        "tier": args.tier,
+    }) as log:
+        gamma = GammaClient()
 
-    # Fetch markets
-    print(f"Fetching markets...", file=sys.stderr)
-    if args.query:
-        markets = await gamma.search_markets(args.query, limit=args.limit)
-        print(f"Found {len(markets)} markets matching '{args.query}'", file=sys.stderr)
-    else:
-        markets = await gamma.get_trending_markets(limit=args.limit)
-        print(f"Got {len(markets)} trending markets", file=sys.stderr)
+        # Fetch markets
+        print("Fetching markets...", file=sys.stderr)
+        if args.query:
+            markets = await gamma.search_markets(args.query, limit=args.limit)
+            print(f"Found {len(markets)} markets matching '{args.query}'", file=sys.stderr)
+        else:
+            markets = await gamma.get_trending_markets(limit=args.limit)
+            print(f"Got {len(markets)} trending markets", file=sys.stderr)
 
-    if len(markets) < 2:
-        print("Need at least 2 markets to find hedges")
-        return 1
+        if len(markets) < 2:
+            log.failure("Need at least 2 markets")
+            print("Need at least 2 markets to find hedges")
+            return 1
 
-    # Initialize LLM client
-    try:
-        llm = LLMClient(model=args.model)
-    except ValueError as e:
-        print(f"Error: {e}")
-        return 1
+        # Initialize LLM client
+        try:
+            llm = LLMClient(model=args.model)
+        except ValueError as e:
+            log.failure(str(e))
+            print(f"Error: {e}")
+            return 1
 
-    all_portfolios = []
+        all_portfolios = []
 
-    # Extract implications for each market
-    print(f"Analyzing {len(markets)} markets for hedging relationships...", file=sys.stderr)
+        # Extract implications for each market
+        print(f"Analyzing {len(markets)} markets for hedging relationships...", file=sys.stderr)
 
-    try:
-        for i, target in enumerate(markets):
-            if not args.json:
-                print(f"[{i+1}/{len(markets)}] {target.question[:60]}...", file=sys.stderr)
+        try:
+            for i, target in enumerate(markets):
+                if not args.json:
+                    print(f"[{i+1}/{len(markets)}] {target.question[:60]}...", file=sys.stderr)
 
-            covers = await extract_implications_for_market(target, markets, llm)
+                covers = await extract_implications_for_market(target, markets, llm)
 
-            if covers:
-                portfolios = build_portfolios_from_covers(target, covers)
-                all_portfolios.extend(portfolios)
+                if covers:
+                    portfolios = build_portfolios_from_covers(target, covers)
+                    all_portfolios.extend(portfolios)
 
-                if not args.json and portfolios:
-                    print(f"  Found {len(portfolios)} potential hedges", file=sys.stderr)
+                    if not args.json and portfolios:
+                        print(f"  Found {len(portfolios)} potential hedges", file=sys.stderr)
 
-    finally:
-        await llm.close()
+        finally:
+            await llm.close()
 
-    # Filter and sort
-    if args.min_coverage:
-        all_portfolios = filter_portfolios_by_coverage(all_portfolios, args.min_coverage)
+        # Filter and sort
+        if args.min_coverage:
+            all_portfolios = filter_portfolios_by_coverage(all_portfolios, args.min_coverage)
 
-    if args.tier:
-        all_portfolios = filter_portfolios_by_tier(all_portfolios, args.tier)
+        if args.tier:
+            all_portfolios = filter_portfolios_by_tier(all_portfolios, args.tier)
 
-    all_portfolios = sort_portfolios(all_portfolios)
+        all_portfolios = sort_portfolios(all_portfolios)
 
-    # Output
-    print(f"\n=== Found {len(all_portfolios)} covering portfolios ===\n", file=sys.stderr)
+        log.set_details({
+            "markets_scanned": len(markets),
+            "portfolios_found": len(all_portfolios),
+            "query": args.query,
+        })
+        log.success()
 
-    if args.json:
-        print_portfolios_json(all_portfolios)
-    else:
-        print_portfolios_table(all_portfolios)
+        # Output
+        print(f"\n=== Found {len(all_portfolios)} covering portfolios ===\n", file=sys.stderr)
 
-    return 0
+        if args.json:
+            print_portfolios_json(all_portfolios)
+        else:
+            print_portfolios_table(all_portfolios)
+
+        return 0
 
 
 async def cmd_analyze(args):
     """Analyze a specific market pair for hedging relationship."""
-    gamma = GammaClient()
+    with ActionLogger("hedge.analyze", {
+        "market_id_1": args.market_id_1,
+        "market_id_2": args.market_id_2,
+    }) as log:
+        gamma = GammaClient()
 
-    # Fetch both markets
-    try:
-        print(f"Fetching markets...", file=sys.stderr)
-        market1 = await gamma.get_market(args.market_id_1)
-        market2 = await gamma.get_market(args.market_id_2)
-    except Exception as e:
-        print(f"Error fetching markets: {e}")
-        return 1
+        # Fetch both markets
+        try:
+            print("Fetching markets...", file=sys.stderr)
+            market1 = await gamma.get_market(args.market_id_1)
+            market2 = await gamma.get_market(args.market_id_2)
+        except asyncio.TimeoutError as e:
+            log.failure(f"Timeout: {e}")
+            print("Error fetching markets: Timeout", file=sys.stderr)
+            return 1
+        except httpx.HTTPStatusError as e:
+            log.failure(f"HTTP error: {e}")
+            print(f"Error fetching markets: {e}")
+            return 1
+        except httpx.RequestError as e:
+            log.failure(f"Network error: {e}")
+            print(f"Error fetching markets: {e}")
+            return 1
 
-    print(f"Market 1: {market1.question}", file=sys.stderr)
-    print(f"Market 2: {market2.question}", file=sys.stderr)
+        print(f"Market 1: {market1.question}", file=sys.stderr)
+        print(f"Market 2: {market2.question}", file=sys.stderr)
 
-    # Initialize LLM client
-    try:
-        llm = LLMClient(model=args.model)
-    except ValueError as e:
-        print(f"Error: {e}")
-        return 1
+        # Initialize LLM client
+        try:
+            llm = LLMClient(model=args.model)
+        except ValueError as e:
+            log.failure(str(e))
+            print(f"Error: {e}")
+            return 1
 
-    all_portfolios = []
+        all_portfolios = []
 
-    try:
-        # Check both directions
-        print(f"\nAnalyzing implications...", file=sys.stderr)
+        try:
+            # Check both directions
+            print("\nAnalyzing implications...", file=sys.stderr)
 
-        # Market 1 as target
-        covers1 = await extract_implications_for_market(market1, [market2], llm)
-        if covers1:
-            portfolios1 = build_portfolios_from_covers(market1, covers1)
-            all_portfolios.extend(portfolios1)
+            # Market 1 as target
+            covers1 = await extract_implications_for_market(market1, [market2], llm)
+            if covers1:
+                portfolios1 = build_portfolios_from_covers(market1, covers1)
+                all_portfolios.extend(portfolios1)
 
-        # Market 2 as target
-        covers2 = await extract_implications_for_market(market2, [market1], llm)
-        if covers2:
-            portfolios2 = build_portfolios_from_covers(market2, covers2)
-            all_portfolios.extend(portfolios2)
+            # Market 2 as target
+            covers2 = await extract_implications_for_market(market2, [market1], llm)
+            if covers2:
+                portfolios2 = build_portfolios_from_covers(market2, covers2)
+                all_portfolios.extend(portfolios2)
 
-    finally:
-        await llm.close()
+        finally:
+            await llm.close()
 
-    # Filter and sort
-    if args.min_coverage:
-        all_portfolios = filter_portfolios_by_coverage(all_portfolios, args.min_coverage)
+        # Filter and sort
+        if args.min_coverage:
+            all_portfolios = filter_portfolios_by_coverage(all_portfolios, args.min_coverage)
 
-    all_portfolios = sort_portfolios(all_portfolios)
+        all_portfolios = sort_portfolios(all_portfolios)
 
-    # Output
-    if not all_portfolios:
-        print("\nNo hedging relationship found between these markets.")
-        print("This could mean:")
-        print("  - No logical implication exists (most common)")
-        print("  - Relationship is correlation, not causation")
-        print("  - Coverage is below minimum threshold")
+        log.set_details({
+            "market_1": market1.question[:50],
+            "market_2": market2.question[:50],
+            "portfolios_found": len(all_portfolios),
+        })
+        log.success()
+
+        # Output
+        if not all_portfolios:
+            print("\nNo hedging relationship found between these markets.")
+            print("This could mean:")
+            print("  - No logical implication exists (most common)")
+            print("  - Relationship is correlation, not causation")
+            print("  - Coverage is below minimum threshold")
+            return 0
+
+        print(f"\n=== Found {len(all_portfolios)} covering portfolio(s) ===\n", file=sys.stderr)
+
+        if args.json:
+            print_portfolios_json(all_portfolios)
+        else:
+            print_portfolios_table(all_portfolios)
+            print("\nRelationships:")
+            for p in all_portfolios:
+                print(f"  - {p['relationship']}")
+
         return 0
-
-    print(f"\n=== Found {len(all_portfolios)} covering portfolio(s) ===\n", file=sys.stderr)
-
-    if args.json:
-        print_portfolios_json(all_portfolios)
-    else:
-        print_portfolios_table(all_portfolios)
-        print("\nRelationships:")
-        for p in all_portfolios:
-            print(f"  - {p['relationship']}")
-
-    return 0
 
 
 # =============================================================================

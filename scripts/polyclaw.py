@@ -12,6 +12,8 @@ Usage:
     polyclaw hedge scan
     polyclaw hedge scan --query "election"
     polyclaw hedge analyze <id1> <id2>
+    polyclaw actions
+    polyclaw actions --type trade
 """
 
 import sys
@@ -78,6 +80,9 @@ def main():
     elif command == "hedge":
         return run_script("hedge", args)
 
+    elif command == "actions":
+        return run_script("actions", args)
+
     elif command == "help" or command == "--help" or command == "-h":
         print(__doc__)
         print("Commands:")
@@ -100,6 +105,10 @@ def main():
         print("  hedge scan --query <q>     Scan markets matching query")
         print("  hedge analyze <id1> <id2>  Analyze pair for hedging relationship")
         print("")
+        print("  actions                    View recent action logs")
+        print("  actions --type trade       Filter logs by type")
+        print("  actions --date YYYY-MM-DD  View logs for specific date")
+        print("")
         print("Environment Variables:")
         print("  CHAINSTACK_NODE            Polygon RPC URL (required for trading)")
         print("  OPENROUTER_API_KEY         OpenRouter API key (required for hedge)")
@@ -114,6 +123,8 @@ def main():
         print("  polyclaw positions")
         print("  polyclaw hedge scan")
         print("  polyclaw hedge scan --query 'election'")
+        print("  polyclaw actions")
+        print("  polyclaw actions --type trade")
         return 0
 
     elif command == "version" or command == "--version" or command == "-v":
