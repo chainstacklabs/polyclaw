@@ -6,6 +6,7 @@ Rotation: Daily, with 30-day retention
 """
 
 import json
+import random
 import threading
 import time
 from dataclasses import dataclass, asdict
@@ -54,9 +55,14 @@ def sanitize_value(value: Any, key: str = "") -> Any:
     - private_key, POLYCLAW_PRIVATE_KEY
     - password, secret
     - api_key, OPENROUTER_API_KEY
+    - address, tx_hash, transaction, wallet identifiers
     """
     # Sensitive substrings to check in key names
-    sensitive_substrings = ["private", "secret", "password", "api_key"]
+    sensitive_substrings = [
+        "private", "secret", "password", "api_key",
+        "address", "tx_hash", "transaction", "tx",
+        "clob_order_id", "wallet", "nonce",
+    ]
 
     key_lower = key.lower()
 
@@ -157,7 +163,7 @@ def log_action(
 
     # Periodically clean up old logs
     # (Run cleanup ~1% of the time to avoid overhead)
-    if hash(entry.timestamp) % 100 == 0:
+    if random.random() < 0.01:
         cleanup_old_logs()
 
 
@@ -225,13 +231,19 @@ class ActionLogger:
             self.result = "failure"
             self.details["error"] = str(exc_val)
 
-        log_action(
-            action=self.action,
-            params=self.params,
-            result=self.result,
-            details=self.details,
-            duration_ms=duration_ms,
-        )
+        try:
+            log_action(
+                action=self.action,
+                params=self.params,
+                result=self.result,
+                details=self.details,
+                duration_ms=duration_ms,
+            )
+        except Exception as e:
+            # Logging should never break command execution
+            # Fallback to stderr if logging fails
+            import sys
+            print(f"Logging failed: {e}", file=sys.stderr)
 
 
 def get_actions_by_date(date_str: str) -> list[dict]:
@@ -266,30 +278,50 @@ def get_actions_by_date(date_str: str) -> list[dict]:
     return actions
 
 
-def get_recent_actions(limit: int = 20) -> list[dict]:
-    """Get the most recent actions from today's log.
+def get_recent_actions(limit: int = 20, max_lookback_days: int = 7) -> list[dict]:
+    """Get the most recent actions across multiple days.
+
+    Iterates backwards day-by-day until limit is reached or max lookback is hit.
 
     Args:
         limit: Maximum number of actions to return.
+        max_lookback_days: Maximum number of days to look back (default: 7).
 
     Returns:
         List of action entries, most recent first.
     """
-    actions = get_actions_by_date(datetime.now(timezone.utc).strftime("%Y-%m-%d"))
-    return actions[-limit:][::-1]  # Return last N, reversed (most recent first)
+    actions = []
+    current_date = datetime.now(timezone.utc)
+
+    for _ in range(max_lookback_days):
+        date_str = current_date.strftime("%Y-%m-%d")
+        day_actions = get_actions_by_date(date_str)
+
+        # Prepend actions from this day (they're already in chronological order)
+        actions = day_actions + actions
+
+        if len(actions) >= limit:
+            break
+
+        # Move to previous day
+        current_date = current_date - timedelta(days=1)
+
+    # Return last N actions, reversed (most recent first)
+    return actions[-limit:][::-1]
 
 
-def get_actions_by_type(action_prefix: str, limit: int = 50) -> list[dict]:
+def get_actions_by_type(action_prefix: str, limit: int = 50, max_lookback_days: int = 7) -> list[dict]:
     """Get actions filtered by type (action prefix).
 
     Args:
         action_prefix: Filter actions starting with this prefix (e.g., "trade")
         limit: Maximum number of actions to return.
+        max_lookback_days: Maximum number of days to look back (default: 7).
 
     Returns:
         List of matching action entries.
     """
-    actions = get_actions_by_date(datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+    actions = get_recent_actions(limit=limit * 2, max_lookback_days=max_lookback_days)
 
     filtered = [a for a in actions if a.get("action", "").startswith(action_prefix)]
-    return filtered[-limit:][::-1]  # Return last N, reversed
+    return filtered[:limit]  # Already most recent first from get_recent_actions

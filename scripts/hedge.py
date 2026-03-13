@@ -463,7 +463,7 @@ async def cmd_analyze(args):
             market2 = await gamma.get_market(args.market_id_2)
         except asyncio.TimeoutError as e:
             log.failure(f"Timeout: {e}")
-            print(f"Error fetching markets: Timeout")
+            print("Error fetching markets: Timeout", file=sys.stderr)
             return 1
         except httpx.HTTPStatusError as e:
             log.failure(f"HTTP error: {e}")
