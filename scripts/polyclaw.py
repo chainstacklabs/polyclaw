@@ -9,6 +9,9 @@ Usage:
     polyclaw wallet approve
     polyclaw buy <market_id> YES 50
     polyclaw positions
+    polyclaw redeem list
+    polyclaw redeem <position_id>
+    polyclaw redeem all
     polyclaw hedge scan
     polyclaw hedge scan --query "election"
     polyclaw hedge analyze <id1> <id2>
@@ -75,6 +78,9 @@ def main():
         else:
             return run_script("positions", ["list"])
 
+    elif command == "redeem":
+        return run_script("redeem", args)
+
     elif command == "hedge":
         return run_script("hedge", args)
 
@@ -95,6 +101,10 @@ def main():
         print("  positions                  List open positions with P&L")
         print("  positions --all            List all positions")
         print("  position <id>              Show position details")
+        print("")
+        print("  redeem list                Show resolved/redeemable positions")
+        print("  redeem <position_id>       Claim collateral for one position")
+        print("  redeem all                 Sweep every redeemable position")
         print("")
         print("  hedge scan                 Scan trending markets for hedges")
         print("  hedge scan --query <q>     Scan markets matching query")

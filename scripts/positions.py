@@ -103,9 +103,12 @@ async def cmd_list(args):
     total_pnl = 0
     total_value = 0
     total_cost = 0
+    redeemable_pending = 0
 
     for pos in positions:
         pnl_info = await calculate_position_pnl(pos, gamma)
+        if pnl_info.get("market_resolved") and not pos.get("redeem_tx") and pos.get("status") != "resolved":
+            redeemable_pending += 1
 
         result = {
             "position_id": pos["position_id"][:8],
@@ -139,6 +142,8 @@ async def cmd_list(args):
 
         print("-" * 80)
         print(f"Total: {len(results)} positions | Value: ${total_value:.2f} | P&L: {format_pnl(total_pnl)}")
+        if redeemable_pending:
+            print(f"\n{redeemable_pending} resolved position(s) pending redemption — run `polyclaw redeem list`.")
 
     return 0
 
