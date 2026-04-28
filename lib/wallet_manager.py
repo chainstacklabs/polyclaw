@@ -14,7 +14,8 @@ from lib.contracts import CONTRACTS, ERC20_ABI, CTF_ABI, POLYGON_CHAIN_ID
 class WalletBalances:
     """Wallet balances."""
     pol: float
-    usdc_e: float
+    pusd: float
+    usdc_e: float  # Kept for visibility / wrapping into pUSD via CollateralOnramp.
 
 
 class WalletManager:
@@ -63,7 +64,7 @@ class WalletManager:
         pass  # Key stays in env var anyway
 
     def get_balances(self) -> WalletBalances:
-        """Get POL and USDC.e balances."""
+        """Get POL, pUSD, and USDC.e balances."""
         if not self._address:
             raise ValueError("No wallet configured")
 
@@ -72,24 +73,30 @@ class WalletManager:
 
         pol = float(w3.from_wei(w3.eth.get_balance(checksum), "ether"))
 
+        pusd = w3.eth.contract(
+            address=Web3.to_checksum_address(CONTRACTS["PUSD"]),
+            abi=ERC20_ABI,
+        )
+        pusd_balance = pusd.functions.balanceOf(checksum).call() / 1e6
+
         usdc = w3.eth.contract(
             address=Web3.to_checksum_address(CONTRACTS["USDC_E"]),
             abi=ERC20_ABI,
         )
         usdc_balance = usdc.functions.balanceOf(checksum).call() / 1e6
 
-        return WalletBalances(pol=pol, usdc_e=usdc_balance)
+        return WalletBalances(pol=pol, pusd=pusd_balance, usdc_e=usdc_balance)
 
     def check_approvals(self) -> bool:
-        """Check if all Polymarket approvals are set."""
+        """Check if all Polymarket V2 approvals are set (pUSD as collateral)."""
         if not self._address:
             return False
 
         w3 = self._get_web3()
         checksum = Web3.to_checksum_address(self._address)
 
-        usdc = w3.eth.contract(
-            address=Web3.to_checksum_address(CONTRACTS["USDC_E"]),
+        pusd = w3.eth.contract(
+            address=Web3.to_checksum_address(CONTRACTS["PUSD"]),
             abi=ERC20_ABI,
         )
         ctf = w3.eth.contract(
@@ -97,13 +104,13 @@ class WalletManager:
             abi=CTF_ABI,
         )
 
-        # Check USDC approvals
+        # pUSD approvals: CTF (for splitPosition) + V2 Exchanges (for trades)
         for contract in ["CTF", "CTF_EXCHANGE", "NEG_RISK_CTF_EXCHANGE"]:
-            allowance = usdc.functions.allowance(checksum, CONTRACTS[contract]).call()
+            allowance = pusd.functions.allowance(checksum, CONTRACTS[contract]).call()
             if allowance == 0:
                 return False
 
-        # Check CTF approvals
+        # CTF setApprovalForAll for V2 Exchanges + Neg Risk Adapter
         for contract in ["CTF_EXCHANGE", "NEG_RISK_CTF_EXCHANGE", "NEG_RISK_ADAPTER"]:
             approved = ctf.functions.isApprovedForAll(
                 checksum, CONTRACTS[contract]
@@ -114,7 +121,11 @@ class WalletManager:
         return True
 
     def set_approvals(self) -> list[str]:
-        """Set all Polymarket contract approvals. Returns tx hashes."""
+        """Set all Polymarket V2 contract approvals (pUSD collateral). Returns tx hashes.
+
+        V1 → V2 cutover left old USDC.e approvals to V1 Exchange addresses; those
+        are harmless but stale. Re-approve pUSD against the new V2 Exchanges.
+        """
         if not self._private_key:
             raise ValueError("No wallet configured")
 
@@ -122,8 +133,8 @@ class WalletManager:
         address = Web3.to_checksum_address(self._address)
         account = w3.eth.account.from_key(self._private_key)
 
-        usdc = w3.eth.contract(
-            address=Web3.to_checksum_address(CONTRACTS["USDC_E"]),
+        pusd = w3.eth.contract(
+            address=Web3.to_checksum_address(CONTRACTS["PUSD"]),
             abi=ERC20_ABI,
         )
         ctf = w3.eth.contract(
@@ -135,9 +146,9 @@ class WalletManager:
         tx_hashes = []
 
         approvals = [
-            (usdc, "approve", CONTRACTS["CTF"], MAX_UINT256),
-            (usdc, "approve", CONTRACTS["CTF_EXCHANGE"], MAX_UINT256),
-            (usdc, "approve", CONTRACTS["NEG_RISK_CTF_EXCHANGE"], MAX_UINT256),
+            (pusd, "approve", CONTRACTS["CTF"], MAX_UINT256),
+            (pusd, "approve", CONTRACTS["CTF_EXCHANGE"], MAX_UINT256),
+            (pusd, "approve", CONTRACTS["NEG_RISK_CTF_EXCHANGE"], MAX_UINT256),
             (ctf, "setApprovalForAll", CONTRACTS["CTF_EXCHANGE"], True),
             (ctf, "setApprovalForAll", CONTRACTS["NEG_RISK_CTF_EXCHANGE"], True),
             (ctf, "setApprovalForAll", CONTRACTS["NEG_RISK_ADAPTER"], True),

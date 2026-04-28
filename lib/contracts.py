@@ -1,11 +1,15 @@
 """Polymarket contract addresses and ABIs (Polygon Mainnet)."""
 
-# Polygon mainnet contracts
+# Polygon mainnet contracts (CLOB V2, post 2026-04-28 cutover).
+# Collateral switched from USDC.e to pUSD; Exchange addresses are V2.
+# USDC.e is retained only as the input to CollateralOnramp.wrap().
 CONTRACTS = {
+    "PUSD": "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB",
     "USDC_E": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
+    "COLLATERAL_ONRAMP": "0x93070a847efEf7F70739046A929D47a521F5B8ee",
     "CTF": "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045",
-    "CTF_EXCHANGE": "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E",
-    "NEG_RISK_CTF_EXCHANGE": "0xC5d563A36AE78145C45a50134d48A1215220f80a",
+    "CTF_EXCHANGE": "0xE111180000d2663C0091e4f400237545B87B996B",
+    "NEG_RISK_CTF_EXCHANGE": "0xe2222d279d744050d28e00520010520000310F59",
     "NEG_RISK_ADAPTER": "0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296",
 }
 
