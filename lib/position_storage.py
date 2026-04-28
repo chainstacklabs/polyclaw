@@ -123,7 +123,7 @@ class PositionStorage:
             return False
 
     def set_condition_id(self, position_id: str, condition_id: str) -> bool:
-        """Backfill condition_id on positions written before #4 (thread-safe)."""
+        """Backfill condition_id on positions written before it was tracked (thread-safe)."""
         with _storage_lock:
             positions = self.load_all()
             for p in positions:

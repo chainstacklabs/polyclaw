@@ -40,6 +40,7 @@ from lib.contracts import CONTRACTS, CTF_ABI, POLYGON_CHAIN_ID
 # splitPosition partitions [1, 2] map indexSet bit-0 → outcome 0 (YES),
 # bit-1 → outcome 1 (NO). To redeem a single side we pass that same
 # bitmask back as a single-element indexSets array.
+# Assumes binary markets only — polyclaw doesn't support multi-outcome.
 SIDE_TO_OUTCOME_INDEX = {"YES": 0, "NO": 1}
 SIDE_TO_INDEX_SET = {"YES": 1, "NO": 2}
 
@@ -64,7 +65,7 @@ async def _ensure_condition_id(position: dict, gamma: GammaClient, storage: Posi
         market = await gamma.get_market(position["market_id"])
         cid = market.condition_id
     except Exception as e:
-        print(f"  [{position['position_id'][:8]}] failed to fetch market: {e}")
+        print(f"  [{position['position_id'][:8]}] failed to fetch market: {e}", file=sys.stderr)
         return None
     if cid:
         storage.set_condition_id(position["position_id"], cid)
@@ -89,13 +90,16 @@ async def cmd_list(args):
     gamma = GammaClient()
 
     if not (rpc := WalletManager().rpc_url):
-        print("Error: CHAINSTACK_NODE not set")
+        print("Error: CHAINSTACK_NODE not set", file=sys.stderr)
         return 1
     w3 = Web3(Web3.HTTPProvider(rpc, request_kwargs={"timeout": 60, "proxies": {}}))
 
     positions = [p for p in storage.load_all() if p.get("status") != "resolved" and not p.get("redeem_tx")]
     if not positions:
-        print("No open positions to check.")
+        if args.json:
+            print("[]")
+        else:
+            print("No open positions to check.")
         return 0
 
     redeemable = []
@@ -106,7 +110,7 @@ async def cmd_list(args):
         try:
             resolved, nums, denom = _resolution_state(w3, cid)
         except Exception as e:
-            print(f"  [{pos['position_id'][:8]}] CTF query failed: {e}")
+            print(f"  [{pos['position_id'][:8]}] CTF query failed: {e}", file=sys.stderr)
             continue
         if not resolved:
             continue
