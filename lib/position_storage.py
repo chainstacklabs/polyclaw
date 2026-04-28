@@ -110,6 +110,29 @@ class PositionStorage:
                     return True
             return False
 
+    def mark_redeemed(self, position_id: str, redeem_tx: str) -> bool:
+        """Record a redemption tx hash and flip status to resolved (thread-safe)."""
+        with _storage_lock:
+            positions = self.load_all()
+            for p in positions:
+                if p.get("position_id") == position_id:
+                    p["redeem_tx"] = redeem_tx
+                    p["status"] = "resolved"
+                    self.save_all(positions)
+                    return True
+            return False
+
+    def set_condition_id(self, position_id: str, condition_id: str) -> bool:
+        """Backfill condition_id on positions written before it was tracked (thread-safe)."""
+        with _storage_lock:
+            positions = self.load_all()
+            for p in positions:
+                if p.get("position_id") == position_id:
+                    p["condition_id"] = condition_id
+                    self.save_all(positions)
+                    return True
+            return False
+
     def update_notes(self, position_id: str, notes: str) -> bool:
         """Update position notes (thread-safe)."""
         with _storage_lock:
