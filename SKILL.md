@@ -126,25 +126,31 @@ For the MVP, the private key is stored in an environment variable for simplicity
 | `POLYCLAW_PRIVATE_KEY` | Yes (trading) | EVM private key (hex, with or without 0x prefix) |
 | `HTTPS_PROXY` | Recommended | Rotating residential proxy for CLOB (e.g., IPRoyal) |
 | `CLOB_MAX_RETRIES` | No | Max CLOB retries with IP rotation (default: 5) |
+| `POLY_BUILDER_CODE` | No | Bytes32 builder code for attribution (from polymarket.com/settings?tab=builder). Attached to every order when set. |
 
 **Security Warning:** Keep only small amounts in this wallet. Withdraw regularly to a secure wallet. The private key in an env var is convenient for automation but less secure than encrypted storage.
 
 ## Trading Flow
 
-1. **Split Position** - USDC.e is split into YES + NO tokens via CTF contract
-2. **Sell Unwanted** - The unwanted side is sold via CLOB order book
+1. **Split Position** - pUSD is split into YES + NO tokens via CTF contract
+2. **Sell Unwanted** - The unwanted side is sold via CLOB order book (V2)
 3. **Result** - You hold the wanted position, recovered partial cost from selling unwanted
 
 Example: Buy YES at $0.70
-- Split $100 USDC.e → 100 YES + 100 NO tokens
-- Sell 100 NO tokens at ~$0.30 → recover ~$27 USDC.e
+- Split $100 pUSD → 100 YES + 100 NO tokens
+- Sell 100 NO tokens at ~$0.30 → recover ~$27 pUSD
 - Net cost: ~$73 for 100 YES tokens (entry: $0.73)
 
-## Polymarket Contracts (Polygon Mainnet)
+If you only have USDC.e, wrap it 1:1 into pUSD via the Collateral Onramp's `wrap()` function before trading.
 
-- **USDC.e:** `0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174`
+## Polymarket Contracts (Polygon Mainnet, CLOB V2)
+
+- **pUSD (collateral):** `0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB`
+- **USDC.e (onramp input):** `0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174`
+- **Collateral Onramp:** `0x93070a847efEf7F70739046A929D47a521F5B8ee`
 - **CTF (Conditional Tokens):** `0x4D97DCd97eC945f40cF65F87097ACe5EA0476045`
-- **CTF Exchange:** `0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E`
+- **CTF Exchange (V2):** `0xE111180000d2663C0091e4f400237545B87B996B`
+- **Neg Risk CTF Exchange (V2):** `0xe2222d279d744050d28e00520010520000310F59`
 
 ## Dependencies
 
@@ -188,8 +194,8 @@ Set the `POLYCLAW_PRIVATE_KEY` environment variable:
 export POLYCLAW_PRIVATE_KEY="0x..."
 ```
 
-### "Insufficient USDC.e"
-Check balance with `uv run python scripts/polyclaw.py wallet status`. You need USDC.e (bridged USDC) on Polygon.
+### "Insufficient pUSD"
+Check balance with `uv run python scripts/polyclaw.py wallet status`. Trades require pUSD (Polymarket USD). If you have USDC.e, wrap it 1:1 via the Collateral Onramp (`0x9307...B8ee`) — the polymarket.com UI does this automatically; API users wrap manually.
 
 ### "CLOB order failed"
 The CLOB sell may fail due to:

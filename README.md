@@ -18,7 +18,7 @@ Browse prediction markets, execute trades on-chain, and discover hedging opportu
 ### Trading
 - `polyclaw buy <market_id> YES <amount>` — Buy YES position
 - `polyclaw buy <market_id> NO <amount>` — Buy NO position
-- Split + CLOB execution (split USDC → YES+NO, sell unwanted side)
+- Split + CLOB execution (split pUSD → YES+NO, sell unwanted side)
 
 ### Position tracking
 - `polyclaw positions` — List open positions with live P&L
@@ -26,7 +26,7 @@ Browse prediction markets, execute trades on-chain, and discover hedging opportu
 - Positions tracked locally in `~/.openclaw/polyclaw/positions.json`
 
 ### Wallet management
-- `polyclaw wallet status` — Show address, POL/USDC.e balances
+- `polyclaw wallet status` — Show address, POL / pUSD / USDC.e balances
 - `polyclaw wallet approve` — Set Polymarket contract approvals (one-time)
 
 ### Hedge discovery
@@ -128,7 +128,7 @@ Returns full market info with link to Polymarket.
 ```
 What's my PolyClaw wallet balance?
 ```
-Shows address, POL balance (for gas), and USDC.e balance.
+Shows address, POL balance (for gas), pUSD balance (collateral), and USDC.e balance (wrap into pUSD via the Collateral Onramp if you need it).
 
 ### 4. Direct trading
 If you have your own conviction on a market:
@@ -213,7 +213,7 @@ polyclaw/
 
 1. **Set approvals** (one-time): `polyclaw wallet approve`
 2. **Execute trade**: `polyclaw buy <market_id> YES 50`
-   - Split $50 USDC.e → 50 YES + 50 NO tokens
+   - Split $50 pUSD → 50 YES + 50 NO tokens
    - Sell 50 NO tokens via CLOB → recover ~$15 (at 30¢)
    - Result: 50 YES tokens, net cost ~$35
 3. **Track position**: `polyclaw positions`
@@ -222,13 +222,13 @@ polyclaw/
 
 Polymarket uses a **Conditional Token Framework (CTF)**. You can't directly "buy YES tokens" — instead:
 
-1. **Split**: Deposit USDC.e into the CTF contract, which mints equal amounts of YES + NO tokens
+1. **Split**: Deposit pUSD into the CTF contract, which mints equal amounts of YES + NO tokens
 2. **Sell unwanted**: Sell the side you don't want via the CLOB order book
 3. **Result**: You hold your desired position, having recovered partial cost from selling the other side
 
 **Example** (buying YES at $0.65):
 ```
-Split:  $2 USDC.e → 2 YES + 2 NO tokens
+Split:  $2 pUSD → 2 YES + 2 NO tokens
 Sell:   2 NO tokens @ $0.35 → recover ~$0.70
 Net:    Paid ~$1.30 for 2 YES tokens (effective price: $0.65)
 ```
@@ -275,14 +275,18 @@ order = client.get_order("0xc93d6214...")
 - **Tier 3 (MODERATE):** 85-90% — decent but noticeable risk
 - **Tier 4 (LOW):** <85% — speculative (filtered by default)
 
-## Polymarket contracts (Polygon mainnet)
+## Polymarket contracts (Polygon mainnet, CLOB V2)
+
+Post 2026-04-28 cutover. Collateral is pUSD; USDC.e is wrapped 1:1 via the Collateral Onramp.
 
 | Contract | Address |
 |----------|---------|
-| USDC.e | `0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174` |
+| pUSD (collateral) | `0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB` |
+| USDC.e (onramp input) | `0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174` |
+| Collateral Onramp (`wrap()`) | `0x93070a847efEf7F70739046A929D47a521F5B8ee` |
 | CTF | `0x4D97DCd97eC945f40cF65F87097ACe5EA0476045` |
-| CTF Exchange | `0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E` |
-| Neg Risk CTF Exchange | `0xC5d563A36AE78145C45a50134d48A1215220f80a` |
+| CTF Exchange (V2) | `0xE111180000d2663C0091e4f400237545B87B996B` |
+| Neg Risk CTF Exchange (V2) | `0xe2222d279d744050d28e00520010520000310F59` |
 | Neg Risk Adapter | `0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296` |
 
 ## Troubleshooting
@@ -311,11 +315,12 @@ Model quality matters. The default `nvidia/nemotron-nano-9b-v2:free` works well.
 - Some models return empty responses (DeepSeek R1 uses `reasoning_content`)
 - Try `--model nvidia/nemotron-nano-9b-v2:free` explicitly
 
-### "Insufficient USDC.e"
-Check balance — you need USDC.e (bridged USDC) on Polygon:
+### "Insufficient pUSD"
+Trades require pUSD (Polymarket USD), not USDC.e. Check balances with:
 ```bash
 uv run python scripts/polyclaw.py wallet status
 ```
+If you have USDC.e but no pUSD, wrap it 1:1 via the Collateral Onramp's `wrap()` function (`0x9307...B8ee`). The polymarket.com UI does this automatically; API-only users wrap manually.
 
 ### "CLOB order failed" / "IP blocked by Cloudflare"
 
