@@ -43,7 +43,7 @@ class TradeResult:
     question: str = ""
     wanted_token_id: str = ""
     entry_price: float = 0.0
-    condition_id: str = ""
+    condition_id: Optional[str] = None
 
 
 class TradeExecutor:
