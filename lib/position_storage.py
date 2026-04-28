@@ -46,6 +46,11 @@ class PositionEntry:
     status: str = "open"  # open, closed, resolved
     notes: Optional[str] = None
 
+    # On-chain identifiers needed for redemption after market resolution.
+    # Optional for backward compatibility with positions written before this change.
+    condition_id: Optional[str] = None
+    redeem_tx: Optional[str] = None
+
 
 class PositionStorage:
     """Manage positions.json file with atomic writes."""
