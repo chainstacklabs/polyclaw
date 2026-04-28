@@ -25,7 +25,7 @@ class ClobClientWrapper:
 
     def _refresh_http_client(self):
         """Create a fresh HTTP client (for IP rotation with proxies)."""
-        import py_clob_client.http_helpers.helpers as clob_helpers
+        import py_clob_client_v2.http_helpers.helpers as clob_helpers
 
         proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
         if proxy:
@@ -41,13 +41,14 @@ class ClobClientWrapper:
             )
 
     def _init_client(self):
-        """Initialize CLOB client with optional proxy support."""
+        """Initialize CLOB V2 client with optional proxy support."""
         try:
-            from py_clob_client.client import ClobClient
-            import py_clob_client.http_helpers.helpers as clob_helpers
+            from py_clob_client_v2.client import ClobClient
+            from py_clob_client_v2.exceptions import PolyApiException
+            import py_clob_client_v2.http_helpers.helpers as clob_helpers
         except ImportError:
             raise ImportError(
-                "py-clob-client not installed. Run: pip install py-clob-client"
+                "py-clob-client-v2 not installed. Run: pip install py-clob-client-v2==1.0.0"
             )
 
         # Configure proxy if available
@@ -57,17 +58,26 @@ class ClobClientWrapper:
                 http2=True, proxy=proxy, timeout=30.0
             )
 
-        # Initialize client
+        # Optional builder attribution: bytes32 builder code from Polymarket
+        # builder profile (https://polymarket.com/settings?tab=builder).
+        builder_code = os.environ.get("POLY_BUILDER_CODE", "").strip() or None
+        builder_config = {"builderCode": builder_code} if builder_code else None
+
         self._client = ClobClient(
-            "https://clob.polymarket.com",
+            host="https://clob.polymarket.com",
             key=self.private_key,
             chain_id=137,
             signature_type=0,
             funder=self.address,
+            builder_config=builder_config,
         )
 
-        # Set up API credentials
-        self._creds = self._client.create_or_derive_api_creds()
+        # V2 splits create_or_derive_api_creds into derive_api_key /
+        # create_api_key. derive returns existing creds; create makes new ones.
+        try:
+            self._creds = self._client.derive_api_key()
+        except PolyApiException:
+            self._creds = self._client.create_api_key()
         self._client.set_api_creds(self._creds)
 
     @property
@@ -98,8 +108,8 @@ class ClobClientWrapper:
         Returns:
             Tuple of (order_id, filled, error_message)
         """
-        from py_clob_client.clob_types import OrderArgs, OrderType
-        from py_clob_client.order_builder.constants import SELL
+        from py_clob_client_v2.clob_types import OrderArgs, OrderType
+        from py_clob_client_v2.order_builder.constants import SELL
 
         # Set low price to match any buy orders (market sell)
         sell_price = round(max(price * 0.90, 0.01), 2)
@@ -168,8 +178,8 @@ class ClobClientWrapper:
             Tuple of (order_id, error_message)
         """
         try:
-            from py_clob_client.clob_types import OrderArgs, OrderType
-            from py_clob_client.order_builder.constants import BUY
+            from py_clob_client_v2.clob_types import OrderArgs, OrderType
+            from py_clob_client_v2.order_builder.constants import BUY
 
             order = self.client.create_order(
                 OrderArgs(
