@@ -31,17 +31,27 @@ def cmd_status(args):
     }
 
     try:
-        result["approvals_set"] = manager.check_approvals()
+        approvals_set = manager.check_approvals()
+        result["approvals_set"] = approvals_set
         balances = manager.get_balances()
         result["balances"] = {
             "POL": f"{balances.pol:.6f}",
+            "pUSD": f"{balances.pusd:.6f}",
             "USDC.e": f"{balances.usdc_e:.6f}",
         }
     except Exception as e:
+        approvals_set = None
         result["approvals_set"] = "unknown"
         result["balances"] = f"Unable to fetch: {e}"
 
     print(json.dumps(result, indent=2))
+
+    if approvals_set is False:
+        print(
+            "\nNote: V2 approvals not set. Polymarket migrated to pUSD collateral "
+            "and new V2 Exchange contracts on 2026-04-28. Run `polyclaw wallet "
+            "approve` to re-approve. Old V1 USDC.e approvals are stale but harmless."
+        )
     return 0
 
 

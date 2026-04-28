@@ -82,7 +82,7 @@ class TradeExecutor:
         )
 
         tx = ctf.functions.splitPosition(
-            Web3.to_checksum_address(CONTRACTS["USDC_E"]),
+            Web3.to_checksum_address(CONTRACTS["PUSD"]),
             bytes(32),  # parentCollectionId
             condition_bytes,
             [1, 2],  # partition for YES, NO
@@ -144,7 +144,7 @@ class TradeExecutor:
 
         # Check balance
         balances = self.wallet.get_balances()
-        if balances.usdc_e < amount:
+        if balances.pusd < amount:
             return TradeResult(
                 success=False,
                 market_id=market_id,
@@ -153,7 +153,11 @@ class TradeExecutor:
                 split_tx=None,
                 clob_order_id=None,
                 clob_filled=False,
-                error=f"Insufficient USDC.e: have {balances.usdc_e:.2f}, need {amount:.2f}",
+                error=(
+                    f"Insufficient pUSD: have {balances.pusd:.2f}, need {amount:.2f}. "
+                    f"USDC.e balance: {balances.usdc_e:.2f} — wrap via CollateralOnramp "
+                    f"(0x9307...B8ee) if needed."
+                ),
             )
 
         # Get market info
