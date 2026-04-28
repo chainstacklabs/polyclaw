@@ -43,6 +43,7 @@ class TradeResult:
     question: str = ""
     wanted_token_id: str = ""
     entry_price: float = 0.0
+    condition_id: str = ""
 
 
 class TradeExecutor:
@@ -239,6 +240,7 @@ class TradeExecutor:
             question=market.question,
             wanted_token_id=wanted_token,
             entry_price=wanted_price,
+            condition_id=market.condition_id,
         )
 
 
@@ -293,6 +295,7 @@ async def cmd_buy(args):
                 split_tx=result.split_tx,
                 clob_order_id=result.clob_order_id,
                 clob_filled=result.clob_filled,
+                condition_id=result.condition_id,
             )
             storage.add(position_entry)
             print(f"  Position ID: {position_entry.position_id[:12]}...")
