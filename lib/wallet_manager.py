@@ -1,5 +1,6 @@
 """Wallet management - env var based."""
 
+import logging
 import os
 from dataclasses import dataclass
 from typing import Optional
@@ -8,6 +9,31 @@ from eth_account import Account
 from web3 import Web3
 
 from lib.contracts import CONTRACTS, ERC20_ABI, CTF_ABI, POLYGON_CHAIN_ID
+
+logger = logging.getLogger(__name__)
+
+# Fallback gas values for Polygon when RPC doesn't support EIP-1559 queries
+_POLYGON_BASE_FEE_FALLBACK = Web3.to_wei(100, "gwei")
+_POLYGON_PRIORITY_FEE_FALLBACK = Web3.to_wei(30, "gwei")
+
+
+def _eip1559_gas(w3: Web3) -> dict:
+    """Build EIP-1559 gas params for Polygon."""
+    try:
+        max_priority_fee = w3.eth.max_priority_fee
+    except Exception:
+        max_priority_fee = _POLYGON_PRIORITY_FEE_FALLBACK
+
+    try:
+        base_fee = w3.eth.get_block("latest")["baseFeePerGas"]
+    except Exception:
+        base_fee = _POLYGON_BASE_FEE_FALLBACK
+
+    max_fee = base_fee * 2 + max_priority_fee
+    return {
+        "maxFeePerGas": max_fee,
+        "maxPriorityFeePerGas": max_priority_fee,
+    }
 
 
 @dataclass
@@ -35,6 +61,7 @@ class WalletManager:
             account = Account.from_key(private_key)
             self._private_key = private_key
             self._address = account.address
+            logger.debug("Wallet loaded: address=%s", account.address)
 
     @property
     def is_unlocked(self) -> bool:
@@ -150,8 +177,8 @@ class WalletManager:
                     "from": address,
                     "nonce": w3.eth.get_transaction_count(address),
                     "gas": 100000,
-                    "gasPrice": w3.eth.gas_price,
                     "chainId": POLYGON_CHAIN_ID,
+                    **_eip1559_gas(w3),
                 }
             )
 

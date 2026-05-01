@@ -7,12 +7,19 @@ Usage:
     hedge analyze <id1> <id2>     # Analyze specific market pair
 """
 
+import logging
 import sys
 import json
 import re
 import asyncio
 import argparse
 from pathlib import Path
+
+logging.basicConfig(
+    level=logging.WARNING,
+    format="%(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 # Add parent to path for lib imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -276,7 +283,7 @@ async def extract_implications_for_market(
         )
 
     except Exception as e:
-        print(f"Error extracting implications: {e}", file=sys.stderr)
+        logger.error("Error extracting implications for '%s': %s", target_market.question[:50], e)
         return []
 
 

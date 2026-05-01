@@ -46,6 +46,9 @@ class PositionEntry:
     status: str = "open"  # open, closed, resolved
     notes: Optional[str] = None
 
+    # Simulation flag — True means no real money was spent
+    paper: bool = False
+
 
 class PositionStorage:
     """Manage positions.json file with atomic writes."""

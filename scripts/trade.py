@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Trade execution - split + CLOB sell."""
 
+import logging
 import sys
 import json
 import time
@@ -12,6 +13,12 @@ from datetime import datetime, timezone
 from typing import Optional
 from pathlib import Path
 
+logging.basicConfig(
+    level=logging.WARNING,
+    format="%(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
+
 # Add parent to path for lib imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -21,11 +28,12 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 
 from web3 import Web3
 
-from lib.wallet_manager import WalletManager
+from lib.wallet_manager import WalletManager, _eip1559_gas
 from lib.gamma_client import GammaClient, Market
 from lib.clob_client import ClobClientWrapper
 from lib.contracts import CONTRACTS, CTF_ABI, POLYGON_CHAIN_ID
 from lib.position_storage import PositionStorage, PositionEntry
+from lib.config import config
 
 
 @dataclass
@@ -92,8 +100,8 @@ class TradeExecutor:
                 "from": address,
                 "nonce": w3.eth.get_transaction_count(address),
                 "gas": 300000,
-                "gasPrice": w3.eth.gas_price,
                 "chainId": POLYGON_CHAIN_ID,
+                **_eip1559_gas(w3),
             }
         )
 
@@ -108,14 +116,74 @@ class TradeExecutor:
         print(f"Split confirmed in block {receipt['blockNumber']}")
         return tx_hash.hex()
 
+    async def _paper_buy_position(
+        self,
+        market_id: str,
+        position: str,
+        amount: float,
+        slippage: float,
+    ) -> TradeResult:
+        """Simulate a buy without any real blockchain calls."""
+        import uuid as _uuid
+        position = position.upper()
+
+        # Fetch real market data so P&L tracking is accurate
+        try:
+            market = await self._gamma.get_market(market_id)
+        except Exception as e:
+            return TradeResult(
+                success=False, market_id=market_id, position=position,
+                amount=amount, split_tx=None, clob_order_id=None,
+                clob_filled=False, error=f"[PAPER] Failed to fetch market: {e}",
+            )
+
+        if market.resolved:
+            return TradeResult(
+                success=False, market_id=market_id, position=position,
+                amount=amount, split_tx=None, clob_order_id=None,
+                clob_filled=False,
+                error=f"[PAPER] Market already resolved: {market.outcome}",
+            )
+
+        wanted_token  = market.yes_token_id if position == "YES" else market.no_token_id
+        wanted_price  = market.yes_price    if position == "YES" else market.no_price
+        unwanted_price = market.no_price    if position == "YES" else market.yes_price
+
+        fake_split_tx = f"PAPER_{_uuid.uuid4().hex[:16].upper()}"
+        # Simulate CLOB sell of unwanted side (apply slippage)
+        fake_clob_id  = f"PAPER_{_uuid.uuid4().hex[:16].upper()}"
+        simulated_fill_price = round(max(unwanted_price * (1 - slippage), 0.01), 4)
+
+        print(f"[PAPER] Simulated split TX: {fake_split_tx}")
+        print(f"[PAPER] Simulated CLOB sell @ {simulated_fill_price:.2f} (slippage {slippage*100:.0f}%)")
+
+        return TradeResult(
+            success=True,
+            market_id=market_id,
+            position=position,
+            amount=amount,
+            split_tx=fake_split_tx,
+            clob_order_id=fake_clob_id,
+            clob_filled=True,
+            error=None,
+            question=market.question,
+            wanted_token_id=wanted_token or "",
+            entry_price=wanted_price,
+        )
+
     async def buy_position(
         self,
         market_id: str,
         position: str,  # "YES" or "NO"
         amount: float,
         skip_clob_sell: bool = False,
+        slippage: float = 0.10,
     ) -> TradeResult:
         """Buy a position on a market."""
+        # Paper trading mode — simulate without blockchain
+        if config.paper_trading:
+            return await self._paper_buy_position(market_id, position, amount, slippage)
+
         position = position.upper()
         if position not in ["YES", "NO"]:
             return TradeResult(
@@ -127,6 +195,19 @@ class TradeExecutor:
                 clob_order_id=None,
                 clob_filled=False,
                 error="Position must be YES or NO",
+            )
+
+        # Validate amount
+        if amount <= 0:
+            return TradeResult(
+                success=False,
+                market_id=market_id,
+                position=position,
+                amount=amount,
+                split_tx=None,
+                clob_order_id=None,
+                clob_filled=False,
+                error="Amount must be greater than 0",
             )
 
         # Check wallet
@@ -169,6 +250,31 @@ class TradeExecutor:
                 clob_order_id=None,
                 clob_filled=False,
                 error=f"Failed to fetch market: {e}",
+            )
+
+        # Validate market is tradeable
+        if market.resolved:
+            outcome = market.outcome or "unknown"
+            return TradeResult(
+                success=False,
+                market_id=market_id,
+                position=position,
+                amount=amount,
+                split_tx=None,
+                clob_order_id=None,
+                clob_filled=False,
+                error=f"Market already resolved: outcome={outcome}",
+            )
+        if market.closed:
+            return TradeResult(
+                success=False,
+                market_id=market_id,
+                position=position,
+                amount=amount,
+                split_tx=None,
+                clob_order_id=None,
+                clob_filled=False,
+                error="Market is closed and no longer accepting trades",
             )
 
         # Determine tokens and prices
@@ -214,6 +320,7 @@ class TradeExecutor:
                     unwanted_token,
                     amount,  # Same number of tokens as USDC spent
                     unwanted_price,
+                    slippage=slippage,
                 )
                 if clob_filled:
                     print(f"CLOB sell filled: {clob_order_id}")
@@ -254,6 +361,7 @@ async def cmd_buy(args):
             args.position,
             args.amount,
             skip_clob_sell=args.skip_sell,
+            slippage=args.max_slippage,
         )
 
         print("\n" + "=" * 50)
@@ -289,9 +397,11 @@ async def cmd_buy(args):
                 split_tx=result.split_tx,
                 clob_order_id=result.clob_order_id,
                 clob_filled=result.clob_filled,
+                paper=config.paper_trading,
             )
             storage.add(position_entry)
-            print(f"  Position ID: {position_entry.position_id[:12]}...")
+            paper_tag = " [PAPER]" if config.paper_trading else ""
+            print(f"  Position ID: {position_entry.position_id[:12]}...{paper_tag}")
         else:
             print(f"Trade failed: {result.error}")
             return 1
@@ -305,6 +415,88 @@ async def cmd_buy(args):
 
     finally:
         wallet.lock()
+
+
+async def cmd_sell(args):
+    """Execute sell command - close an existing position via CLOB."""
+    wallet = WalletManager()
+
+    if not wallet.is_unlocked:
+        print("Error: No wallet configured")
+        print("Set POLYCLAW_PRIVATE_KEY environment variable.")
+        return 1
+
+    storage = PositionStorage()
+    positions = storage.load_all()
+    matches = [p for p in positions if p["position_id"].startswith(args.position_id)]
+
+    if not matches:
+        print(f"Position not found: {args.position_id}")
+        return 1
+
+    if len(matches) > 1:
+        print("Multiple matches, be more specific:")
+        for p in matches:
+            print(f"  {p['position_id'][:12]} - {p['question'][:50]}")
+        return 1
+
+    pos = matches[0]
+
+    if pos["status"] != "open":
+        print(f"Position is not open (status: {pos['status']})")
+        return 1
+
+    if not pos.get("token_id"):
+        print("Error: Position has no token_id - cannot sell via CLOB")
+        return 1
+
+    # Fetch current price from Gamma
+    gamma = GammaClient()
+    try:
+        market = await gamma.get_market(pos["market_id"])
+    except Exception as e:
+        print(f"Error fetching market: {e}")
+        return 1
+
+    current_price = market.yes_price if pos["position"] == "YES" else market.no_price
+    token_count = pos["entry_amount"]
+
+    print(f"Position: {pos['question'][:60]}")
+    print(f"Side: {pos['position']} | Tokens: {token_count:.2f} | Current price: ${current_price:.2f}")
+    print(f"Estimated proceeds: ${token_count * current_price * (1 - args.max_slippage):.2f} (after {args.max_slippage*100:.0f}% slippage)")
+
+    if not args.yes:
+        confirm = input("Proceed with sell? [y/N]: ")
+        if confirm.lower() != "y":
+            print("Aborted")
+            return 1
+
+    try:
+        clob = ClobClientWrapper(wallet.get_unlocked_key(), wallet.address)
+        order_id, filled, error = clob.sell_fok(
+            pos["token_id"],
+            token_count,
+            current_price,
+            slippage=args.max_slippage,
+        )
+
+        print("\n" + "=" * 50)
+        if filled:
+            print("Position sold successfully!")
+            print(f"  Order ID: {order_id}")
+            storage.update_status(pos["position_id"], "closed")
+            print(f"  Position {pos['position_id'][:12]} marked as closed")
+        else:
+            print(f"Sell failed: {error}")
+            return 1
+
+        if args.json:
+            print(json.dumps({"order_id": order_id, "filled": filled, "error": error}, indent=2))
+
+    finally:
+        wallet.lock()
+
+    return 0
 
 
 def main():
@@ -321,11 +513,29 @@ def main():
         "--skip-sell", action="store_true",
         help="Skip selling unwanted side (keep both YES and NO)"
     )
+    buy_parser.add_argument(
+        "--max-slippage", type=float, default=0.10, metavar="FRAC",
+        help="Max slippage for CLOB sell of unwanted side (default: 0.10 = 10%%)"
+    )
+
+    # Sell
+    sell_parser = subparsers.add_parser("sell", help="Sell (close) an open position")
+    sell_parser.add_argument("position_id", help="Position ID (prefix match)")
+    sell_parser.add_argument(
+        "--max-slippage", type=float, default=0.10, metavar="FRAC",
+        help="Max slippage for CLOB sell (default: 0.10 = 10%%)"
+    )
+    sell_parser.add_argument(
+        "--yes", "-y", action="store_true",
+        help="Skip confirmation prompt"
+    )
 
     args = parser.parse_args()
 
     if args.command == "buy":
         return asyncio.run(cmd_buy(args))
+    elif args.command == "sell":
+        return asyncio.run(cmd_sell(args))
     else:
         parser.print_help()
         return 1

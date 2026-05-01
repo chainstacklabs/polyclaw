@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Position tracking and P&L."""
 
+import csv
+import io
+import logging
 import sys
 import json
 import asyncio
@@ -8,6 +11,12 @@ import argparse
 import uuid
 from datetime import datetime
 from pathlib import Path
+
+logging.basicConfig(
+    level=logging.WARNING,
+    format="%(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 # Add parent to path for lib imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -107,8 +116,10 @@ async def cmd_list(args):
     for pos in positions:
         pnl_info = await calculate_position_pnl(pos, gamma)
 
+        paper_tag = "[P]" if pos.get("paper") else "   "
         result = {
             "position_id": pos["position_id"][:8],
+            "paper": paper_tag,
             "market": pos["question"][:40] + "..." if len(pos["question"]) > 40 else pos["question"],
             "side": pos["position"],
             "entry": f"${pnl_info.get('effective_entry', pos['entry_price']):.2f}",
@@ -132,13 +143,18 @@ async def cmd_list(args):
         print(json.dumps(results, indent=2))
     else:
         # Table output
-        print(f"{'ID':<10} {'Side':<4} {'Entry':>6} {'Now':>6} {'P&L':>10} {'Market'}")
-        print("-" * 80)
+        paper_positions = sum(1 for r in results if r["paper"].strip())
+        print(f"{'ID':<10} {'':3} {'Side':<4} {'Entry':>6} {'Now':>6} {'P&L':>10} {'Market'}")
+        print(f"{'':10} {'[P]':<3}")
+        print("-" * 84)
         for r in results:
-            print(f"{r['position_id']:<10} {r['side']:<4} {r['entry']:>6} {r['current']:>6} {r['pnl']:>10} {r['market'][:35]}")
+            print(f"{r['position_id']:<10} {r['paper']:<3} {r['side']:<4} {r['entry']:>6} {r['current']:>6} {r['pnl']:>10} {r['market'][:35]}")
 
-        print("-" * 80)
-        print(f"Total: {len(results)} positions | Value: ${total_value:.2f} | P&L: {format_pnl(total_pnl)}")
+        print("-" * 84)
+        suffix = f" | Paper: {paper_positions}" if paper_positions else ""
+        print(f"Total: {len(results)} positions | Value: ${total_value:.2f} | P&L: {format_pnl(total_pnl)}{suffix}")
+        if paper_positions:
+            print("[P] = paper trade (simulated, no real capital)")
 
     return 0
 
@@ -220,6 +236,61 @@ def cmd_close(args):
     return 0
 
 
+async def cmd_export(args):
+    """Export positions to CSV for accounting/tax purposes."""
+    storage = PositionStorage()
+    gamma = GammaClient()
+
+    if args.all:
+        positions = storage.load_all()
+    else:
+        positions = storage.get_open()
+
+    if not positions:
+        print("No positions to export.")
+        return 0
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "position_id", "market_id", "question", "side",
+        "entry_time", "entry_amount_usd", "entry_price",
+        "current_price", "current_value_usd", "pnl_usd", "pnl_pct",
+        "status", "split_tx", "clob_order_id", "clob_filled", "notes",
+    ])
+
+    for pos in positions:
+        pnl_info = await calculate_position_pnl(pos, gamma)
+        writer.writerow([
+            pos["position_id"],
+            pos["market_id"],
+            pos["question"],
+            pos["position"],
+            pos["entry_time"],
+            pos["entry_amount"],
+            pos["entry_price"],
+            pnl_info["current_price"],
+            pnl_info["current_value"],
+            pnl_info["pnl"],
+            pnl_info["pnl_pct"],
+            pos["status"],
+            pos.get("split_tx", ""),
+            pos.get("clob_order_id", ""),
+            pos.get("clob_filled", False),
+            pos.get("notes", ""),
+        ])
+
+    csv_text = output.getvalue()
+
+    if args.output:
+        Path(args.output).write_text(csv_text)
+        print(f"Exported {len(positions)} positions to {args.output}")
+    else:
+        print(csv_text, end="")
+
+    return 0
+
+
 def cmd_delete(args):
     """Delete a position record."""
     storage = PositionStorage()
@@ -281,6 +352,11 @@ def main():
     delete_parser.add_argument("position_id", help="Position ID (prefix match)")
     delete_parser.add_argument("--force", "-f", action="store_true", help="Skip confirmation")
 
+    # Export
+    export_parser = subparsers.add_parser("export", help="Export positions to CSV")
+    export_parser.add_argument("--all", action="store_true", help="Include closed positions")
+    export_parser.add_argument("--output", "-o", help="Output file path (default: stdout)")
+
     args = parser.parse_args()
 
     if args.command == "list":
@@ -293,6 +369,8 @@ def main():
         return cmd_close(args)
     elif args.command == "delete":
         return cmd_delete(args)
+    elif args.command == "export":
+        return asyncio.run(cmd_export(args))
     else:
         # Default to list
         args.all = False

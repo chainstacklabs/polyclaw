@@ -1,6 +1,8 @@
 """Polymarket Gamma API client for market browsing."""
 
+import asyncio
 import json
+import logging
 from dataclasses import dataclass
 from typing import Optional
 
@@ -8,6 +10,10 @@ import httpx
 
 
 GAMMA_API_BASE = "https://gamma-api.polymarket.com"
+GAMMA_MAX_RETRIES = 3
+GAMMA_RETRY_DELAY = 1.0
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -49,10 +55,35 @@ class GammaClient:
     def __init__(self, timeout: float = 30.0):
         self.timeout = timeout
 
+    async def _get(self, http: httpx.AsyncClient, *args, **kwargs) -> httpx.Response:
+        """GET with exponential backoff retry on timeout/5xx errors."""
+        for attempt in range(GAMMA_MAX_RETRIES):
+            try:
+                resp = await http.get(*args, **kwargs)
+                resp.raise_for_status()
+                return resp
+            except (httpx.TimeoutException, httpx.ConnectError) as e:
+                if attempt < GAMMA_MAX_RETRIES - 1:
+                    delay = GAMMA_RETRY_DELAY * (attempt + 1)
+                    logger.warning("Gamma API timeout (attempt %d/%d), retrying in %.1fs: %s",
+                                   attempt + 1, GAMMA_MAX_RETRIES, delay, e)
+                    await asyncio.sleep(delay)
+                    continue
+                raise
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code >= 500 and attempt < GAMMA_MAX_RETRIES - 1:
+                    delay = GAMMA_RETRY_DELAY * (attempt + 1)
+                    logger.warning("Gamma API server error %d (attempt %d/%d), retrying in %.1fs",
+                                   e.response.status_code, attempt + 1, GAMMA_MAX_RETRIES, delay)
+                    await asyncio.sleep(delay)
+                    continue
+                raise
+
     async def get_trending_markets(self, limit: int = 20) -> list[Market]:
         """Get trending markets by volume."""
         async with httpx.AsyncClient(timeout=self.timeout) as http:
-            resp = await http.get(
+            resp = await self._get(
+                http,
                 f"{GAMMA_API_BASE}/markets",
                 params={
                     "closed": "false",
@@ -61,7 +92,6 @@ class GammaClient:
                     "ascending": "false",
                 },
             )
-            resp.raise_for_status()
             return [self._parse_market(m) for m in resp.json()]
 
     async def search_markets(self, query: str, limit: int = 20) -> list[Market]:
@@ -74,7 +104,8 @@ class GammaClient:
         fetch_limit = max(500, limit * 10)
 
         async with httpx.AsyncClient(timeout=self.timeout) as http:
-            resp = await http.get(
+            resp = await self._get(
+                http,
                 f"{GAMMA_API_BASE}/markets",
                 params={
                     "closed": "false",
@@ -83,7 +114,6 @@ class GammaClient:
                     "ascending": "false",
                 },
             )
-            resp.raise_for_status()
 
             # Client-side filter by query in question or slug
             query_lower = query.lower()
@@ -101,18 +131,17 @@ class GammaClient:
     async def get_market(self, market_id: str) -> Market:
         """Get market by ID."""
         async with httpx.AsyncClient(timeout=self.timeout) as http:
-            resp = await http.get(f"{GAMMA_API_BASE}/markets/{market_id}")
-            resp.raise_for_status()
+            resp = await self._get(http, f"{GAMMA_API_BASE}/markets/{market_id}")
             return self._parse_market(resp.json())
 
     async def get_market_by_slug(self, slug: str) -> Market:
         """Get market by slug."""
         async with httpx.AsyncClient(timeout=self.timeout) as http:
-            resp = await http.get(
+            resp = await self._get(
+                http,
                 f"{GAMMA_API_BASE}/markets",
                 params={"slug": slug},
             )
-            resp.raise_for_status()
             markets = resp.json()
             if not markets:
                 raise ValueError(f"Market not found: {slug}")
@@ -121,7 +150,8 @@ class GammaClient:
     async def get_events(self, limit: int = 20) -> list[MarketGroup]:
         """Get events/groups with their markets."""
         async with httpx.AsyncClient(timeout=self.timeout) as http:
-            resp = await http.get(
+            resp = await self._get(
+                http,
                 f"{GAMMA_API_BASE}/events",
                 params={
                     "closed": "false",
@@ -130,7 +160,6 @@ class GammaClient:
                     "ascending": "false",
                 },
             )
-            resp.raise_for_status()
             return [self._parse_event(e) for e in resp.json()]
 
     async def get_prices(self, token_ids: list[str]) -> dict[str, float]:
@@ -139,11 +168,11 @@ class GammaClient:
             return {}
 
         async with httpx.AsyncClient(timeout=self.timeout) as http:
-            resp = await http.get(
+            resp = await self._get(
+                http,
                 "https://clob.polymarket.com/prices",
                 params={"token_ids": ",".join(token_ids)},
             )
-            resp.raise_for_status()
             return resp.json()
 
     def _parse_market(self, data: dict) -> Market:

@@ -4,11 +4,14 @@ Wraps py-clob-client for order execution with proxy support.
 Includes retry logic for Cloudflare blocks when using rotating proxies.
 """
 
+import logging
 import os
 import time
 from typing import Optional
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 # Max retries for Cloudflare blocks (with rotating proxy, each retry gets new IP)
 CLOB_MAX_RETRIES = int(os.environ.get("CLOB_MAX_RETRIES", "5"))
@@ -86,6 +89,7 @@ class ClobClientWrapper:
         token_id: str,
         amount: float,
         price: float,
+        slippage: float = 0.10,
     ) -> tuple[Optional[str], bool, Optional[str]]:
         """
         Sell tokens via CLOB using FOK (Fill or Kill) order.
@@ -93,7 +97,8 @@ class ClobClientWrapper:
         Args:
             token_id: Token ID to sell
             amount: Amount of tokens to sell
-            price: Current market price (will sell 10% below)
+            price: Current market price
+            slippage: Maximum slippage fraction (default 0.10 = 10%)
 
         Returns:
             Tuple of (order_id, filled, error_message)
@@ -101,8 +106,10 @@ class ClobClientWrapper:
         from py_clob_client.clob_types import OrderArgs, OrderType
         from py_clob_client.order_builder.constants import SELL
 
-        # Set low price to match any buy orders (market sell)
-        sell_price = round(max(price * 0.90, 0.01), 2)
+        # Sell at (price - slippage) to match any buy orders
+        sell_price = round(max(price * (1 - slippage), 0.01), 2)
+        logger.debug("CLOB sell: token=%s amount=%.2f price=%.2f slippage=%.0f%%",
+                     token_id[:12], amount, sell_price, slippage * 100)
 
         last_error = None
         proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
@@ -111,7 +118,7 @@ class ClobClientWrapper:
             try:
                 # Refresh HTTP client for new IP (only if using proxy and retrying)
                 if attempt > 0 and proxy:
-                    print(f"  Retrying CLOB sell (attempt {attempt + 1}/{CLOB_MAX_RETRIES})...")
+                    logger.info("Retrying CLOB sell (attempt %d/%d)...", attempt + 1, CLOB_MAX_RETRIES)
                     self._refresh_http_client()
                     time.sleep(1)  # Brief pause between retries
 
@@ -125,10 +132,12 @@ class ClobClientWrapper:
                 )
                 result = self.client.post_order(order, OrderType.FOK)
                 order_id = result.get("orderID", str(result)[:40])
+                logger.info("CLOB sell filled: order_id=%s", order_id)
                 return order_id, True, None
 
             except Exception as e:
                 last_error = str(e)
+                logger.debug("CLOB sell attempt %d failed: %s", attempt + 1, last_error)
 
                 # Only retry on Cloudflare blocks when using a proxy
                 if self._is_cloudflare_block(last_error) and proxy:

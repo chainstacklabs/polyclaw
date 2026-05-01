@@ -1,26 +1,35 @@
 """OpenRouter LLM client for hedge discovery.
 
-Async client for calling LLMs via OpenRouter API.
+Async client for calling LLMs via OpenRouter API (or local Ollama).
 Used for extracting logical implications between markets.
+
+To use local Ollama instead of OpenRouter:
+    OPENROUTER_BASE_URL=http://localhost:11434/v1
+    OPENROUTER_API_KEY=ollama
+    OPENROUTER_MODEL=qwen3:14b
 """
 
 import asyncio
+import logging
 import os
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
 
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+# Supports OpenRouter (default) or any OpenAI-compatible API (e.g. local Ollama)
+OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
 
 # Default model (free tier)
 # Note: Model quality matters - must follow JSON format and reject spurious correlations
 # - DeepSeek R1: Good reasoning but returns empty content (puts answer in reasoning_content)
 # - Gemma: Finds spurious correlations
 # - Nemotron: Correct format and good logical reasoning
-DEFAULT_MODEL = "nvidia/nemotron-nano-9b-v2:free"
+DEFAULT_MODEL = os.getenv("OPENROUTER_MODEL", "nvidia/nemotron-nano-9b-v2:free")
 
 # Request settings
 LLM_TIMEOUT = 60.0
@@ -51,12 +60,15 @@ class LLMClient:
         if not self.api_key:
             raise ValueError(
                 "OPENROUTER_API_KEY not set. "
-                "Get a free key at https://openrouter.ai/keys"
+                "Get a free key at https://openrouter.ai/keys\n"
+                "Or for local Ollama: set OPENROUTER_API_KEY=ollama and "
+                "OPENROUTER_BASE_URL=http://localhost:11434/v1"
             )
 
         self.model = model
         self.timeout = timeout
         self.base_url = OPENROUTER_BASE_URL
+        logger.debug("LLM client: model=%s base_url=%s", self.model, self.base_url)
 
         self._client: httpx.AsyncClient | None = None
 
@@ -107,12 +119,25 @@ class LLMClient:
                 )
                 response.raise_for_status()
                 data = response.json()
-                return data["choices"][0]["message"]["content"]
+                message = data["choices"][0]["message"]
+
+                # Primary content field
+                content = (message.get("content") or "").strip()
+
+                # Fallback: some reasoning models (e.g. DeepSeek R1) put the
+                # final answer in `reasoning_content` when `content` is empty
+                if not content:
+                    content = (message.get("reasoning_content") or "").strip()
+                    if content:
+                        logger.debug("Used reasoning_content fallback for model %s", self.model)
+
+                return content
 
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 429:
                     # Rate limited, wait and retry
                     wait_time = 2**attempt
+                    logger.warning("Rate limited by LLM API, retrying in %ds", wait_time)
                     await asyncio.sleep(wait_time)
                     continue
                 raise
