@@ -1,178 +1,102 @@
-"""Wallet management - env var based."""
+"""Wallet reads: signing key + deposit wallet balances and approval state.
+
+Two addresses matter:
+- signer (EOA from POLYCLAW_PRIVATE_KEY): owns the deposit wallet, signs.
+  Holds only POL for `polyclaw recover`, plus anything older polyclaw
+  versions left on it.
+- deposit wallet: where pUSD buying power and outcome tokens live.
+
+Writes (setup, approvals, trades) go through the SDK in ``lib.trading``.
+"""
 
 import os
 from dataclasses import dataclass
 from typing import Optional
 
-from eth_account import Account
 from web3 import Web3
 
-from lib.contracts import CONTRACTS, ERC20_ABI, CTF_ABI, POLYGON_CHAIN_ID
+from lib.contracts import CONTRACTS, CTF_ABI, ERC20_ABI
+from lib.trading import cached_deposit_wallet, private_key, signer_address
 
 
 @dataclass
 class WalletBalances:
-    """Wallet balances."""
-    pol: float
-    pusd: float
-    usdc_e: float  # Kept for visibility / wrapping into pUSD via CollateralOnramp.
+    """Balances in human units."""
+
+    signer_pol: float
+    signer_pusd: float
+    signer_usdc_e: float
+    deposit_pusd: Optional[float]  # None until the deposit wallet is known
 
 
 class WalletManager:
-    """Manages wallet from POLYCLAW_PRIVATE_KEY env var."""
+    """Reads for the configured signer and its deposit wallet."""
 
     def __init__(self, rpc_url: Optional[str] = None):
         self.rpc_url = rpc_url or os.environ.get("CHAINSTACK_NODE", "")
-        self._private_key: Optional[str] = None
-        self._address: Optional[str] = None
-        self._load_from_env()
-
-    def _load_from_env(self) -> None:
-        """Load private key from POLYCLAW_PRIVATE_KEY env var."""
-        private_key = os.environ.get("POLYCLAW_PRIVATE_KEY")
-        if private_key:
-            if not private_key.startswith("0x"):
-                private_key = "0x" + private_key
-            account = Account.from_key(private_key)
-            self._private_key = private_key
-            self._address = account.address
+        try:
+            private_key()
+            self._address: Optional[str] = signer_address()
+        except Exception:
+            self._address = None
 
     @property
-    def is_unlocked(self) -> bool:
-        """Check if wallet is available."""
-        return self._private_key is not None
+    def is_configured(self) -> bool:
+        return self._address is not None
 
     @property
     def address(self) -> Optional[str]:
-        """Get wallet address."""
+        """Signing wallet (EOA) address."""
         return self._address
 
-    def _get_web3(self) -> Web3:
-        """Get Web3 instance."""
+    @property
+    def deposit_wallet(self) -> Optional[str]:
+        """Deposit wallet address, known after `polyclaw wallet setup` or a trade."""
+        return cached_deposit_wallet(self._address) if self._address else None
+
+    def web3(self) -> Web3:
         if not self.rpc_url:
             raise ValueError("CHAINSTACK_NODE environment variable not set")
-        return Web3(Web3.HTTPProvider(self.rpc_url, request_kwargs={"timeout": 60, "proxies": {}}))
+        return Web3(Web3.HTTPProvider(self.rpc_url, request_kwargs={"timeout": 60}))
 
-    def get_unlocked_key(self) -> str:
-        """Get the private key for signing."""
-        if not self._private_key:
-            raise ValueError("No wallet configured. Set POLYCLAW_PRIVATE_KEY env var.")
-        return self._private_key
-
-    def lock(self) -> None:
-        """Clear private key from memory (no-op for env var mode)."""
-        pass  # Key stays in env var anyway
+    def _erc20_balance(self, w3: Web3, token: str, owner: str) -> float:
+        contract = w3.eth.contract(address=Web3.to_checksum_address(token), abi=ERC20_ABI)
+        return contract.functions.balanceOf(Web3.to_checksum_address(owner)).call() / 1e6
 
     def get_balances(self) -> WalletBalances:
-        """Get POL, pUSD, and USDC.e balances."""
         if not self._address:
             raise ValueError("No wallet configured")
-
-        w3 = self._get_web3()
-        checksum = Web3.to_checksum_address(self._address)
-
-        pol = float(w3.from_wei(w3.eth.get_balance(checksum), "ether"))
-
-        pusd = w3.eth.contract(
-            address=Web3.to_checksum_address(CONTRACTS["PUSD"]),
-            abi=ERC20_ABI,
-        )
-        pusd_balance = pusd.functions.balanceOf(checksum).call() / 1e6
-
-        usdc = w3.eth.contract(
-            address=Web3.to_checksum_address(CONTRACTS["USDC_E"]),
-            abi=ERC20_ABI,
-        )
-        usdc_balance = usdc.functions.balanceOf(checksum).call() / 1e6
-
-        return WalletBalances(pol=pol, pusd=pusd_balance, usdc_e=usdc_balance)
-
-    def check_approvals(self) -> bool:
-        """Check if all Polymarket V2 approvals are set (pUSD as collateral)."""
-        if not self._address:
-            return False
-
-        w3 = self._get_web3()
-        checksum = Web3.to_checksum_address(self._address)
-
-        pusd = w3.eth.contract(
-            address=Web3.to_checksum_address(CONTRACTS["PUSD"]),
-            abi=ERC20_ABI,
-        )
-        ctf = w3.eth.contract(
-            address=Web3.to_checksum_address(CONTRACTS["CTF"]),
-            abi=CTF_ABI,
+        w3 = self.web3()
+        signer = Web3.to_checksum_address(self._address)
+        deposit = self.deposit_wallet
+        return WalletBalances(
+            signer_pol=float(w3.from_wei(w3.eth.get_balance(signer), "ether")),
+            signer_pusd=self._erc20_balance(w3, CONTRACTS["PUSD"], signer),
+            signer_usdc_e=self._erc20_balance(w3, CONTRACTS["USDC_E"], signer),
+            deposit_pusd=(
+                self._erc20_balance(w3, CONTRACTS["PUSD"], deposit) if deposit else None
+            ),
         )
 
-        # pUSD approvals: CTF (for splitPosition) + V2 Exchanges (for trades)
-        for contract in ["CTF", "CTF_EXCHANGE", "NEG_RISK_CTF_EXCHANGE"]:
-            allowance = pusd.functions.allowance(checksum, CONTRACTS[contract]).call()
-            if allowance == 0:
-                return False
+    def token_balance(self, owner: str, token_id: str) -> float:
+        """ERC-1155 outcome-token balance (shares) on the CTF."""
+        w3 = self.web3()
+        ctf = w3.eth.contract(address=Web3.to_checksum_address(CONTRACTS["CTF"]), abi=CTF_ABI)
+        return ctf.functions.balanceOf(Web3.to_checksum_address(owner), int(token_id)).call() / 1e6
 
-        # CTF setApprovalForAll for V2 Exchanges + Neg Risk Adapter
-        for contract in ["CTF_EXCHANGE", "NEG_RISK_CTF_EXCHANGE", "NEG_RISK_ADAPTER"]:
-            approved = ctf.functions.isApprovedForAll(
-                checksum, CONTRACTS[contract]
-            ).call()
-            if not approved:
-                return False
+    def check_approvals(self) -> Optional[bool]:
+        """True if the deposit wallet has every approval the SDK trades with.
 
-        return True
-
-    def set_approvals(self) -> list[str]:
-        """Set all Polymarket V2 contract approvals (pUSD collateral). Returns tx hashes.
-
-        V1 → V2 cutover left old USDC.e approvals to V1 Exchange addresses; those
-        are harmless but stale. Re-approve pUSD against the new V2 Exchanges.
+        Asks the SDK (indexed Data API state). None if unknown (no deposit
+        wallet yet, or the lookup failed).
         """
-        if not self._private_key:
-            raise ValueError("No wallet configured")
+        deposit = self.deposit_wallet
+        if not deposit:
+            return None
+        from polymarket import PublicClient
 
-        w3 = self._get_web3()
-        address = Web3.to_checksum_address(self._address)
-        account = w3.eth.account.from_key(self._private_key)
-
-        pusd = w3.eth.contract(
-            address=Web3.to_checksum_address(CONTRACTS["PUSD"]),
-            abi=ERC20_ABI,
-        )
-        ctf = w3.eth.contract(
-            address=Web3.to_checksum_address(CONTRACTS["CTF"]),
-            abi=CTF_ABI,
-        )
-
-        MAX_UINT256 = 2**256 - 1
-        tx_hashes = []
-
-        approvals = [
-            (pusd, "approve", CONTRACTS["CTF"], MAX_UINT256),
-            (pusd, "approve", CONTRACTS["CTF_EXCHANGE"], MAX_UINT256),
-            (pusd, "approve", CONTRACTS["NEG_RISK_CTF_EXCHANGE"], MAX_UINT256),
-            (ctf, "setApprovalForAll", CONTRACTS["CTF_EXCHANGE"], True),
-            (ctf, "setApprovalForAll", CONTRACTS["NEG_RISK_CTF_EXCHANGE"], True),
-            (ctf, "setApprovalForAll", CONTRACTS["NEG_RISK_ADAPTER"], True),
-        ]
-
-        for contract, method, spender, value in approvals:
-            fn = getattr(contract.functions, method)
-            tx = fn(Web3.to_checksum_address(spender), value).build_transaction(
-                {
-                    "from": address,
-                    "nonce": w3.eth.get_transaction_count(address),
-                    "gas": 100000,
-                    "gasPrice": w3.eth.gas_price,
-                    "chainId": POLYGON_CHAIN_ID,
-                }
-            )
-
-            signed = account.sign_transaction(tx)
-            tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-            receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
-
-            if receipt["status"] != 1:
-                raise ValueError(f"Approval failed: {tx_hash.hex()}")
-
-            tx_hashes.append(tx_hash.hex())
-
-        return tx_hashes
+        try:
+            with PublicClient() as client:
+                return client.get_trading_approvals_state(wallet=deposit).is_fully_approved
+        except Exception:
+            return None

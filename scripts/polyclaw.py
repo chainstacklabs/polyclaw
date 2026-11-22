@@ -6,12 +6,16 @@ Usage:
     polyclaw markets search "election"
     polyclaw market <id>
     polyclaw wallet status
-    polyclaw wallet approve
-    polyclaw buy <market_id> YES 50
+    polyclaw wallet setup
+    polyclaw wallet deposit 20 --yes
+    polyclaw buy <market_id> YES 20          (preview)
+    polyclaw buy <market_id> YES 20 --yes    (execute)
     polyclaw positions
     polyclaw redeem list
     polyclaw redeem <position_id>
     polyclaw redeem all
+    polyclaw recover scan
+    polyclaw recover run --yes
     polyclaw hedge scan
     polyclaw hedge scan --query "election"
     polyclaw hedge analyze <id1> <id2>
@@ -69,7 +73,12 @@ def main():
         return run_script("trade", ["buy"] + args)
 
     elif command == "positions":
-        return run_script("positions", args)
+        # positions.py takes --json before the subcommand and defaults to list
+        json_flag = [a for a in args if a == "--json"]
+        rest = [a for a in args if a != "--json"]
+        if not rest or rest[0].startswith("-"):
+            rest = ["list", *rest]
+        return run_script("positions", json_flag + rest)
 
     elif command == "position":
         # Shortcut: polyclaw position <id> -> positions show <id>
@@ -80,6 +89,9 @@ def main():
 
     elif command == "redeem":
         return run_script("redeem", args)
+
+    elif command == "recover":
+        return run_script("recover", args)
 
     elif command == "hedge":
         return run_script("hedge", args)
@@ -92,11 +104,12 @@ def main():
         print("  markets events             Show events with multiple markets")
         print("  market <id>                Show market details")
         print("")
-        print("  wallet status              Show wallet status and balances")
-        print("  wallet approve             Set Polymarket contract approvals (one-time)")
+        print("  wallet status              Addresses, balances, approvals")
+        print("  wallet setup               Create deposit wallet + approvals (gasless, one-time)")
+        print("  wallet deposit <amt> --yes Move pUSD from signing wallet to deposit wallet")
         print("")
-        print("  buy <market_id> YES <amt>  Buy YES position for $amt")
-        print("  buy <market_id> NO <amt>   Buy NO position for $amt")
+        print("  buy <market_id> YES <amt>  Preview a YES buy for $amt pUSD")
+        print("  buy <market_id> NO <amt> --yes  Execute a NO buy")
         print("")
         print("  positions                  List open positions with P&L")
         print("  positions --all            List all positions")
@@ -106,28 +119,33 @@ def main():
         print("  redeem <position_id>       Claim collateral for one position")
         print("  redeem all                 Sweep every redeemable position")
         print("")
+        print("  recover scan               Find tokens left on the signing wallet by polyclaw <= 0.1.0")
+        print("  recover run --yes          Merge/redeem them back to collateral")
+        print("")
         print("  hedge scan                 Scan trending markets for hedges")
         print("  hedge scan --query <q>     Scan markets matching query")
         print("  hedge analyze <id1> <id2>  Analyze pair for hedging relationship")
         print("")
         print("Environment Variables:")
-        print("  CHAINSTACK_NODE            Polygon RPC URL (required for trading)")
+        print("  CHAINSTACK_NODE            Polygon RPC URL (required for wallet/trading)")
+        print("  POLYCLAW_PRIVATE_KEY       Signing key (owner of the deposit wallet)")
+        print("  POLYCLAW_RELAYER_API_KEY   Relayer API key for that key (polymarket.com/settings?tab=api-keys)")
+        print("  POLYCLAW_MAX_TRADE_USD     Largest allowed buy (default 50)")
         print("  OPENROUTER_API_KEY         OpenRouter API key (required for hedge)")
-        print("  POLYCLAW_PRIVATE_KEY       EVM private key (required for trading)")
         print("")
         print("Examples:")
         print("  polyclaw markets trending")
         print("  polyclaw markets search 'trump'")
         print("  polyclaw market will-trump-win-2028")
         print("  polyclaw wallet status")
-        print("  polyclaw buy abc123 YES 50")
+        print("  polyclaw buy abc123 YES 20 --yes")
         print("  polyclaw positions")
         print("  polyclaw hedge scan")
         print("  polyclaw hedge scan --query 'election'")
         return 0
 
     elif command == "version" or command == "--version" or command == "-v":
-        print("PolyClaw v0.1.0")
+        print("PolyClaw v0.2.0")
         return 0
 
     else:

@@ -15,12 +15,12 @@ import httpx
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
-# Default model (free tier)
-# Note: Model quality matters - must follow JSON format and reject spurious correlations
-# - DeepSeek R1: Good reasoning but returns empty content (puts answer in reasoning_content)
-# - Gemma: Finds spurious correlations
-# - Nemotron: Correct format and good logical reasoning
-DEFAULT_MODEL = "nvidia/nemotron-nano-9b-v2:free"
+# Default model; override with POLYCLAW_HEDGE_MODEL or --model.
+# Model quality matters - it must follow the JSON format and reject spurious
+# correlations. The previous default (nvidia/nemotron-nano-9b-v2:free) was
+# removed from OpenRouter. qwen3-235b-a22b-2507 is the validation model the
+# sister repo (polymarket-alpha-bot) runs; it is paid but cheap.
+DEFAULT_MODEL = os.environ.get("POLYCLAW_HEDGE_MODEL", "").strip() or "qwen/qwen3-235b-a22b-2507"
 
 # Request settings
 LLM_TIMEOUT = 60.0

@@ -51,6 +51,12 @@ class PositionEntry:
     condition_id: Optional[str] = None
     redeem_tx: Optional[str] = None
 
+    # Which wallet holds the tokens: "deposit" (current) or "eoa" (positions
+    # opened by polyclaw <= 0.1.0 on the bare signing wallet; see `recover`).
+    holder: str = "eoa"
+    unwanted_token_id: Optional[str] = None
+    sold_shares: float = 0.0
+
 
 class PositionStorage:
     """Manage positions.json file with atomic writes."""

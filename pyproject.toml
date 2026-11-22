@@ -1,15 +1,23 @@
 [project]
 name = "polyclaw"
-version = "0.1.0"
+version = "0.2.0"
 description = "Trading-enabled Polymarket skill for OpenClaw"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "web3>=7.0.0",
-    "httpx[socks]>=0.28.0",
-    "py-clob-client-v2==1.0.0",
+    # web3 8 needs eth-abi>=6; the SDK requires eth-abi<6
+    "web3>=7.0.0,<8",
+    "httpx>=0.28.0",
+    # Official Polymarket SDK: deposit wallet (signature type 3), gasless
+    # split/merge/redeem, order signing. Pinned exactly: 0.x minors can break.
+    "polymarket-client==0.18.0",
     "eth-account>=0.13.0",
     "python-dotenv>=1.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.0",
 ]
 
 [build-system]

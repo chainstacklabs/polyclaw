@@ -1,8 +1,16 @@
 """Polymarket contract addresses and ABIs (Polygon Mainnet)."""
 
 # Polygon mainnet contracts (CLOB V2, post 2026-04-28 cutover).
-# Collateral switched from USDC.e to pUSD; Exchange addresses are V2.
-# USDC.e is retained only as the input to CollateralOnramp.wrap().
+#
+# Trading goes through the official SDK and the user's deposit wallet; the SDK
+# carries its own address book. The addresses here are only used for direct
+# reads (balances, resolution state) and for `polyclaw recover`, which cleans
+# up tokens that older polyclaw versions left on the bare signing wallet.
+#
+# Collateral notes (verified on-chain 2026-11-17):
+# - Orders settle in pUSD, but CTF positions of live markets are USDC.e-backed.
+# - Splitting on the CTF with pUSD as collateral mints token IDs that match no
+#   market (polyclaw <= 0.1.0 did this). `recover` merges them back to pUSD.
 CONTRACTS = {
     "PUSD": "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB",
     "USDC_E": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
@@ -41,6 +49,16 @@ ERC20_ABI = [
             {"name": "_value", "type": "uint256"},
         ],
         "name": "approve",
+        "outputs": [{"name": "", "type": "bool"}],
+        "type": "function",
+    },
+    {
+        "constant": False,
+        "inputs": [
+            {"name": "_to", "type": "address"},
+            {"name": "_value", "type": "uint256"},
+        ],
+        "name": "transfer",
         "outputs": [{"name": "", "type": "bool"}],
         "type": "function",
     },
@@ -130,6 +148,27 @@ CTF_ABI = [
         ],
         "name": "redeemPositions",
         "outputs": [],
+        "type": "function",
+    },
+    {
+        "inputs": [
+            {"name": "parentCollectionId", "type": "bytes32"},
+            {"name": "conditionId", "type": "bytes32"},
+            {"name": "indexSet", "type": "uint256"},
+        ],
+        "name": "getCollectionId",
+        "outputs": [{"name": "", "type": "bytes32"}],
+        "stateMutability": "view",
+        "type": "function",
+    },
+    {
+        "inputs": [
+            {"name": "collateralToken", "type": "address"},
+            {"name": "collectionId", "type": "bytes32"},
+        ],
+        "name": "getPositionId",
+        "outputs": [{"name": "", "type": "uint256"}],
+        "stateMutability": "pure",
         "type": "function",
     },
 ]

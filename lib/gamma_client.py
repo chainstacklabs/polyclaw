@@ -30,6 +30,12 @@ class Market:
     closed: bool
     resolved: bool
     outcome: Optional[str]
+    # Protocol: "v1" = CTF market (clobTokenIds) — the only kind polyclaw
+    # trades. "v2" = Polymarket Protocol V2 (positionIds, ExchangeV3).
+    version: Optional[str] = None
+    # Minimum order size in shares (Gamma `orderMinSize`).
+    order_min_size: Optional[float] = None
+    accepting_orders: bool = True
 
 
 @dataclass
@@ -168,6 +174,11 @@ class GammaClient:
             closed=data.get("closed", False),
             resolved=data.get("resolved", False),
             outcome=data.get("outcome"),
+            version=data.get("version"),
+            order_min_size=(
+                float(data["orderMinSize"]) if data.get("orderMinSize") else None
+            ),
+            accepting_orders=bool(data.get("acceptingOrders", True)),
         )
 
     def _parse_event(self, data: dict) -> MarketGroup:
