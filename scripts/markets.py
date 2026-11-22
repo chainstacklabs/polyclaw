@@ -53,7 +53,6 @@ async def cmd_trending(args):
         print(json.dumps([format_market_row(m) for m in markets], indent=2))
     else:
         # Terminal output: truncate unless --full
-        trunc = 0 if args.full else 60
         print(f"{'ID':<12} {'YES':>6} {'NO':>6} {'24h Vol':>10} {'Question'}")
         print("-" * 80)
         for m in markets:

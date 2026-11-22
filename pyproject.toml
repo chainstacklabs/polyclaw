@@ -26,3 +26,11 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["lib", "scripts"]
+
+[tool.ruff.lint]
+# Correctness-focused baseline, enforced in CI.
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+# CLI scripts put the skill root on sys.path and load .env before lib imports.
+"scripts/*" = ["E402"]
