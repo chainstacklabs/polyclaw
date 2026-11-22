@@ -1,290 +1,198 @@
 #!/usr/bin/env python3
-"""Claim collateral from resolved Polymarket positions.
+"""Claim pUSD from resolved positions held in the deposit wallet.
 
-After a market resolves, holders of winning outcome tokens must call
-``redeemPositions`` on the CTF contract to swap those tokens back into
-collateral (pUSD post-2026-04-28). polymarket.com does this automatically
-for orders placed via its UI, but positions opened via direct contract
-calls (``polyclaw buy``) don't appear there — so the holder has to claim
-the collateral themselves. This is what this script does.
+  redeem list             Resolved positions and their expected payout (read-only)
+  redeem <position_id>    Redeem one position (id prefix is enough)
+  redeem all              Redeem every resolved position with a payout
 
-Usage:
-    polyclaw redeem list                # show resolved/redeemable positions
-    polyclaw redeem <position_id>       # claim one position
-    polyclaw redeem all                 # claim every redeemable position
-
-Refs #4, #2.
+Redeeming goes through the SDK (gasless, both YES and NO in one go). A
+position is marked redeemed only when it had something to pay out; positions
+that resolved against you are marked "lost". Positions opened by polyclaw
+<= 0.1.0 live on the signing wallet: use `polyclaw recover` for those.
 """
 
-import sys
-import json
-import asyncio
 import argparse
+import asyncio
+import json
+import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from dotenv import load_dotenv
+
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-from web3 import Web3
+from web3 import Web3  # noqa: E402
 
-from lib.wallet_manager import WalletManager
-from lib.gamma_client import GammaClient
-from lib.position_storage import PositionStorage
-from lib.contracts import CONTRACTS, CTF_ABI, POLYGON_CHAIN_ID
+from lib.contracts import CONTRACTS, CTF_ABI  # noqa: E402
+from lib.position_storage import PositionStorage  # noqa: E402
+from lib.trading import ConfigError, create_client  # noqa: E402
+from lib.wallet_manager import WalletManager  # noqa: E402
 
-
-# Polymarket binary market convention: outcome index 0 = YES, 1 = NO.
-# splitPosition partitions [1, 2] map indexSet bit-0 → outcome 0 (YES),
-# bit-1 → outcome 1 (NO). To redeem a single side we pass that same
-# bitmask back as a single-element indexSets array.
-# Assumes binary markets only — polyclaw doesn't support multi-outcome.
-SIDE_TO_OUTCOME_INDEX = {"YES": 0, "NO": 1}
-SIDE_TO_INDEX_SET = {"YES": 1, "NO": 2}
+# Polymarket binary markets: outcome index 0 = YES, 1 = NO.
+SIDE_INDEX = {"YES": 0, "NO": 1}
 
 
-def _condition_bytes(condition_id: str) -> bytes:
-    return bytes.fromhex(condition_id[2:] if condition_id.startswith("0x") else condition_id)
+@dataclass
+class Claim:
+    position: dict
+    resolved: bool
+    payout: float  # expected pUSD
+    note: Optional[str] = None
 
 
-def _ctf(w3: Web3):
-    return w3.eth.contract(
-        address=Web3.to_checksum_address(CONTRACTS["CTF"]),
-        abi=CTF_ABI,
+def expected_payout(
+    wanted: float, unwanted: float, side: str, numerators: list[int], denominator: int
+) -> float:
+    """pUSD paid for the held YES/NO balances (shares) under the resolution."""
+    if not denominator:
+        return 0.0
+    i = SIDE_INDEX[side]
+    return (wanted * numerators[i] + unwanted * numerators[1 - i]) / denominator
+
+
+def assess(position: dict, w3: Web3, deposit: str) -> Claim:
+    """Resolution state and expected payout for one deposit-wallet position."""
+    ctf = w3.eth.contract(address=Web3.to_checksum_address(CONTRACTS["CTF"]), abi=CTF_ABI)
+    cid = bytes.fromhex(position["condition_id"].removeprefix("0x"))
+    denom = ctf.functions.payoutDenominator(cid).call()
+    if not denom:
+        return Claim(position, resolved=False, payout=0.0)
+    nums = [ctf.functions.payoutNumerators(cid, i).call() for i in range(2)]
+    owner = Web3.to_checksum_address(deposit)
+
+    def bal(token_id: Optional[str]) -> float:
+        if not token_id:
+            return 0.0
+        return ctf.functions.balanceOf(owner, int(token_id)).call() / 1e6
+
+    payout = expected_payout(
+        bal(position.get("token_id")),
+        bal(position.get("unwanted_token_id")),
+        position["position"],
+        nums,
+        denom,
     )
+    return Claim(position, resolved=True, payout=payout)
 
 
-async def _ensure_condition_id(position: dict, gamma: GammaClient, storage: PositionStorage) -> Optional[str]:
-    """Return position's condition_id, backfilling from Gamma when missing."""
-    cid = position.get("condition_id")
-    if cid:
-        return cid
-    try:
-        market = await gamma.get_market(position["market_id"])
-        cid = market.condition_id
-    except Exception as e:
-        print(f"  [{position['position_id'][:8]}] failed to fetch market: {e}", file=sys.stderr)
-        return None
-    if cid:
-        storage.set_condition_id(position["position_id"], cid)
-    return cid or None
+def _open_deposit_positions(storage: PositionStorage) -> tuple[list[dict], int]:
+    rows = [
+        p
+        for p in storage.load_all()
+        if p.get("status") == "open" and not p.get("redeem_tx") and p.get("condition_id")
+    ]
+    legacy = sum(1 for p in rows if p.get("holder", "eoa") != "deposit")
+    return [p for p in rows if p.get("holder") == "deposit"], legacy
 
 
-def _resolution_state(w3: Web3, condition_id: str) -> tuple[bool, list[int], int]:
-    """Return (resolved, numerators, denominator) for a condition."""
-    ctf = _ctf(w3)
-    cb = _condition_bytes(condition_id)
-    denom = ctf.functions.payoutDenominator(cb).call()
-    if denom == 0:
-        return False, [], 0
-    slot_count = ctf.functions.getOutcomeSlotCount(cb).call()
-    nums = [ctf.functions.payoutNumerators(cb, i).call() for i in range(slot_count)]
-    return True, nums, denom
-
-
-async def cmd_list(args):
-    """Show positions that are resolved and not yet redeemed."""
-    storage = PositionStorage()
-    gamma = GammaClient()
-
-    if not (rpc := WalletManager().rpc_url):
-        print("Error: CHAINSTACK_NODE not set", file=sys.stderr)
-        return 1
-    w3 = Web3(Web3.HTTPProvider(rpc, request_kwargs={"timeout": 60, "proxies": {}}))
-
-    positions = [p for p in storage.load_all() if p.get("status") != "resolved" and not p.get("redeem_tx")]
-    if not positions:
-        if args.json:
-            print("[]")
-        else:
-            print("No open positions to check.")
-        return 0
-
-    redeemable = []
-    for pos in positions:
-        cid = await _ensure_condition_id(pos, gamma, storage)
-        if not cid:
-            continue
+def _claims(positions: list[dict], manager: WalletManager) -> list[Claim]:
+    w3 = manager.web3()
+    out = []
+    for p in positions:
         try:
-            resolved, nums, denom = _resolution_state(w3, cid)
+            out.append(assess(p, w3, manager.deposit_wallet))
         except Exception as e:
-            print(f"  [{pos['position_id'][:8]}] CTF query failed: {e}", file=sys.stderr)
-            continue
-        if not resolved:
-            continue
-        side = pos["position"]
-        won = nums[SIDE_TO_OUTCOME_INDEX[side]] > 0
-        redeemable.append({
-            "position_id": pos["position_id"],
-            "market": pos["question"][:50],
-            "side": side,
-            "won": won,
-            "payout_share": f"{nums[SIDE_TO_OUTCOME_INDEX[side]]}/{denom}",
-            "estimated_payout": round(pos["entry_amount"] * nums[SIDE_TO_OUTCOME_INDEX[side]] / denom, 2) if won else 0.0,
-        })
-
-    if args.json:
-        print(json.dumps(redeemable, indent=2))
-        return 0
-
-    if not redeemable:
-        print("No resolved positions awaiting redemption.")
-        return 0
-
-    print(f"{'ID':<10} {'Side':<4} {'Won':<5} {'Share':>10} {'Est. payout':>12}  Market")
-    print("-" * 90)
-    for r in redeemable:
-        won_str = "yes" if r["won"] else "no"
-        print(f"{r['position_id'][:8]:<10} {r['side']:<4} {won_str:<5} {r['payout_share']:>10} ${r['estimated_payout']:>10.2f}  {r['market']}")
-    print(f"\n{len(redeemable)} redeemable. Run `polyclaw redeem <id>` or `polyclaw redeem all`.")
-    return 0
+            print(f"[{p['position_id'][:8]}] read failed: {e}", file=sys.stderr)
+    return out
 
 
-def _redeem_one(w3: Web3, wallet: WalletManager, condition_id: str, side: str) -> str:
-    """Send the redeemPositions tx for a single position. Returns tx hash."""
-    ctf = _ctf(w3)
-    address = Web3.to_checksum_address(wallet.address)
-    account = w3.eth.account.from_key(wallet.get_unlocked_key())
-    tx = ctf.functions.redeemPositions(
-        Web3.to_checksum_address(CONTRACTS["PUSD"]),
-        bytes(32),  # parentCollectionId
-        _condition_bytes(condition_id),
-        [SIDE_TO_INDEX_SET[side]],
-    ).build_transaction({
-        "from": address,
-        "nonce": w3.eth.get_transaction_count(address),
-        "gas": 250_000,
-        "gasPrice": w3.eth.gas_price,
-        "chainId": POLYGON_CHAIN_ID,
-    })
-    signed = account.sign_transaction(tx)
-    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-    print(f"  Redeem TX submitted: {tx_hash.hex()}")
-    receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
-    if receipt["status"] != 1:
-        raise ValueError(f"Redeem reverted: {tx_hash.hex()}")
-    print(f"  Redeem confirmed in block {receipt['blockNumber']}")
-    return tx_hash.hex()
-
-
-async def _redeem_position(pos: dict, w3: Web3, wallet: WalletManager, gamma: GammaClient, storage: PositionStorage) -> bool:
-    """Redeem one position. Returns True on success."""
-    pid = pos["position_id"][:8]
-    if pos.get("redeem_tx"):
-        print(f"[{pid}] already redeemed: {pos['redeem_tx']}")
+def _redeem(client, claim: Claim, storage: PositionStorage) -> bool:
+    pid = claim.position["position_id"]
+    if claim.payout <= 0:
+        storage.update_status(pid, "lost")
+        print(f"[{pid[:8]}] resolved with no payout - marked lost")
         return False
-    cid = await _ensure_condition_id(pos, gamma, storage)
-    if not cid:
-        print(f"[{pid}] no condition_id available")
-        return False
-    try:
-        resolved, nums, denom = _resolution_state(w3, cid)
-    except Exception as e:
-        print(f"[{pid}] CTF query failed: {e}")
-        return False
-    if not resolved:
-        print(f"[{pid}] market not resolved yet")
-        return False
-    side = pos["position"]
-    won = nums[SIDE_TO_OUTCOME_INDEX[side]] > 0
-    if not won:
-        print(f"[{pid}] losing side ({side}) — skip; payout vector {nums}/{denom}")
-        return False
-    print(f"[{pid}] redeeming {side} on '{pos['question'][:60]}'")
-    try:
-        tx = _redeem_one(w3, wallet, cid, side)
-    except Exception as e:
-        print(f"[{pid}] redeem failed: {e}")
-        return False
-    storage.mark_redeemed(pos["position_id"], tx)
-    print(f"[{pid}] done.")
+    tx = client.redeem_positions(condition_id=claim.position["condition_id"]).wait()
+    storage.mark_redeemed(pid, tx.transaction_hash)
+    print(f"[{pid[:8]}] redeemed ~{claim.payout:.2f} pUSD: {tx.transaction_hash}")
     return True
 
 
-async def cmd_claim(args):
-    """Redeem a single position by id prefix."""
+async def cmd(args) -> int:
+    manager = WalletManager()
     storage = PositionStorage()
-    gamma = GammaClient()
-    wallet = WalletManager()
-    if not wallet.is_unlocked:
-        print("Error: POLYCLAW_PRIVATE_KEY not set")
-        return 1
-    if not wallet.rpc_url:
-        print("Error: CHAINSTACK_NODE not set")
-        return 1
-    w3 = Web3(Web3.HTTPProvider(wallet.rpc_url, request_kwargs={"timeout": 60, "proxies": {}}))
-
-    positions = storage.load_all()
-    matches = [p for p in positions if p["position_id"].startswith(args.position_id)]
-    if not matches:
-        print(f"Position not found: {args.position_id}")
-        return 1
-    if len(matches) > 1:
-        print("Multiple matches, be more specific:")
-        for p in matches:
-            print(f"  {p['position_id'][:12]} — {p['question'][:40]}")
+    if not manager.is_configured or not manager.deposit_wallet:
+        print("No deposit wallet. Run `polyclaw wallet setup` first.", file=sys.stderr)
         return 1
 
-    ok = await _redeem_position(matches[0], w3, wallet, gamma, storage)
-    return 0 if ok else 1
+    positions, legacy = _open_deposit_positions(storage)
+    if args.command == "claim":
+        positions = [p for p in positions if p["position_id"].startswith(args.position_id)]
+        if len(positions) != 1:
+            print(
+                f"Expected one open deposit-wallet position matching "
+                f"{args.position_id!r}, found {len(positions)}",
+                file=sys.stderr,
+            )
+            return 1
 
-
-async def cmd_all(args):
-    """Sweep every redeemable position."""
-    storage = PositionStorage()
-    gamma = GammaClient()
-    wallet = WalletManager()
-    if not wallet.is_unlocked:
-        print("Error: POLYCLAW_PRIVATE_KEY not set")
+    try:
+        claims = [c for c in _claims(positions, manager) if c.resolved]
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
         return 1
-    if not wallet.rpc_url:
-        print("Error: CHAINSTACK_NODE not set")
-        return 1
-    w3 = Web3(Web3.HTTPProvider(wallet.rpc_url, request_kwargs={"timeout": 60, "proxies": {}}))
-
-    candidates = [
-        p for p in storage.load_all()
-        if p.get("status") != "resolved" and not p.get("redeem_tx")
-    ]
-    if not candidates:
-        print("Nothing to redeem.")
-        return 0
-
-    redeemed = 0
-    for pos in candidates:
-        if await _redeem_position(pos, w3, wallet, gamma, storage):
-            redeemed += 1
-    print(f"\nRedeemed {redeemed} of {len(candidates)} candidates.")
-    return 0
-
-
-def main():
-    # Convenience: `polyclaw redeem <id>` (bare positional) → claim that id
-    argv = sys.argv[1:]
-    if argv and argv[0] not in ("list", "all", "claim", "-h", "--help", "--json"):
-        argv = ["claim", *argv]
-
-    parser = argparse.ArgumentParser(description="Redeem resolved Polymarket positions")
-    parser.add_argument("--json", action="store_true", help="JSON output (list only)")
-    sub = parser.add_subparsers(dest="command")
-    sub.add_parser("list", help="Show resolved/redeemable positions")
-    sub.add_parser("all", help="Redeem every redeemable position")
-    claim = sub.add_parser("claim", help="Redeem one position by id prefix")
-    claim.add_argument("position_id")
-
-    args = parser.parse_args(argv)
 
     if args.command == "list":
-        return asyncio.run(cmd_list(args))
-    if args.command == "all":
-        return asyncio.run(cmd_all(args))
-    if args.command == "claim":
-        return asyncio.run(cmd_claim(args))
+        rows = [
+            {
+                "position_id": c.position["position_id"],
+                "market": c.position["question"][:60],
+                "side": c.position["position"],
+                "expected_payout": round(c.payout, 4),
+            }
+            for c in claims
+        ]
+        if args.json:
+            print(json.dumps(rows, indent=2))
+        elif not rows:
+            print("No resolved deposit-wallet positions.")
+        else:
+            for r in rows:
+                print(f"{r['position_id'][:8]}  {r['side']:<3}  ~{r['expected_payout']:.2f} pUSD  {r['market']}")
+        if legacy and not args.json:
+            print(f"\n{legacy} older position(s) live on the signing wallet: run `polyclaw recover scan`.")
+        return 0
+
+    if not claims:
+        print("Nothing resolved to redeem.")
+        return 0
+    try:
+        client = create_client()
+    except ConfigError as e:
+        print(f"Refused: {e}", file=sys.stderr)
+        return 1
+
+    failed = 0
+    for c in claims:
+        try:
+            _redeem(client, c, storage)
+        except Exception as e:
+            failed += 1
+            print(f"[{c.position['position_id'][:8]}] redeem failed: {e}", file=sys.stderr)
+    return 1 if failed else 0
+
+
+def main() -> int:
+    argv = sys.argv[1:]
+    if argv and argv[0] not in ("list", "all", "claim", "-h", "--help"):
+        argv = ["claim", *argv]
+    parser = argparse.ArgumentParser(description="Redeem resolved positions")
+    sub = parser.add_subparsers(dest="command")
+    lst = sub.add_parser("list", help="Resolved positions and expected payout")
+    lst.add_argument("--json", action="store_true")
+    sub.add_parser("all", help="Redeem every resolved position")
+    claim = sub.add_parser("claim", help="Redeem one position")
+    claim.add_argument("position_id")
+    args = parser.parse_args(argv)
+    if args.command in ("list", "all", "claim"):
+        return asyncio.run(cmd(args))
     parser.print_help()
     return 1
 
 
 if __name__ == "__main__":
-    sys.exit(main() or 0)
+    sys.exit(main())
