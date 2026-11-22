@@ -49,6 +49,28 @@ class MarketGroup:
     markets: list[Market]
 
 
+SUPPORTED_VERSIONS = ("v1", "v2")
+
+
+def outcome_token_ids(data: dict) -> list[str]:
+    """Trading IDs of a market's outcomes [YES, NO], chosen by its protocol.
+
+    Per Polymarket's V2 migration guide, pick the field by `version` even when
+    both are present: "v1" -> `clobTokenIds` (JSON-encoded string, CTF token
+    IDs), "v2" -> `positionIds` (list, PositionManager IDs). Unknown or
+    missing versions give no IDs, so the market can't be traded by mistake.
+    """
+    version = data.get("version")
+    if version == "v2":
+        raw = data.get("positionIds") or []
+    elif version == "v1":
+        raw = data.get("clobTokenIds") or "[]"
+    else:
+        return []
+    ids = json.loads(raw) if isinstance(raw, str) else raw
+    return [str(i) for i in ids if str(i).isdigit()]
+
+
 class GammaClient:
     """HTTP client for Polymarket Gamma API."""
 
@@ -154,7 +176,7 @@ class GammaClient:
 
     def _parse_market(self, data: dict) -> Market:
         """Parse market JSON into Market dataclass."""
-        clob_tokens = json.loads(data.get("clobTokenIds", "[]"))
+        clob_tokens = outcome_token_ids(data)
         prices = json.loads(data.get("outcomePrices", "[0.5, 0.5]"))
 
         return Market(

@@ -56,6 +56,8 @@ class PositionEntry:
     holder: str = "eoa"
     unwanted_token_id: Optional[str] = None
     sold_shares: float = 0.0
+    # Market protocol: "v1" (CTF tokens) or "v2" (Protocol V2 PositionManager).
+    protocol: str = "v1"
 
 
 class PositionStorage:

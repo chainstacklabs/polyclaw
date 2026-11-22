@@ -19,6 +19,9 @@ CONTRACTS = {
     "CTF_EXCHANGE": "0xE111180000d2663C0091e4f400237545B87B996B",
     "NEG_RISK_CTF_EXCHANGE": "0xe2222d279d744050d28e00520010520000310F59",
     "NEG_RISK_ADAPTER": "0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296",
+    # Polymarket Protocol V2 (markets with Gamma `version: "v2"`): outcome
+    # balances live here, not on the CTF. docs.polymarket.com/resources/contracts
+    "POSITION_MANAGER": "0x006F54F7f9A22e0000CC2AB60031000000ae9fEF",
 }
 
 # Polygon chain ID
@@ -169,6 +172,31 @@ CTF_ABI = [
         "name": "getPositionId",
         "outputs": [{"name": "", "type": "uint256"}],
         "stateMutability": "pure",
+        "type": "function",
+    },
+]
+
+# Protocol V2 PositionManager: ERC-1155 balances + payout reads.
+# getPayout reverts while the market is unresolved; 0 is a valid losing payout.
+POSITION_MANAGER_ABI = [
+    {
+        "inputs": [
+            {"name": "account", "type": "address"},
+            {"name": "id", "type": "uint256"},
+        ],
+        "name": "balanceOf",
+        "outputs": [{"name": "", "type": "uint256"}],
+        "stateMutability": "view",
+        "type": "function",
+    },
+    {
+        "inputs": [
+            {"name": "positionId", "type": "uint256"},
+            {"name": "amount", "type": "uint256"},
+        ],
+        "name": "getPayout",
+        "outputs": [{"name": "", "type": "uint256"}],
+        "stateMutability": "view",
         "type": "function",
     },
 ]

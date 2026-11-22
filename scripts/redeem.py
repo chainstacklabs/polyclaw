@@ -27,7 +27,7 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 
 from web3 import Web3  # noqa: E402
 
-from lib.contracts import CONTRACTS, CTF_ABI  # noqa: E402
+from lib.contracts import CONTRACTS, CTF_ABI, POSITION_MANAGER_ABI  # noqa: E402
 from lib.position_storage import PositionStorage  # noqa: E402
 from lib.trading import ConfigError, create_client  # noqa: E402
 from lib.wallet_manager import WalletManager  # noqa: E402
@@ -56,6 +56,8 @@ def expected_payout(
 
 def assess(position: dict, w3: Web3, deposit: str) -> Claim:
     """Resolution state and expected payout for one deposit-wallet position."""
+    if position.get("protocol") == "v2":
+        return assess_v2(position, w3, deposit)
     ctf = w3.eth.contract(address=Web3.to_checksum_address(CONTRACTS["CTF"]), abi=CTF_ABI)
     cid = bytes.fromhex(position["condition_id"].removeprefix("0x"))
     denom = ctf.functions.payoutDenominator(cid).call()
@@ -77,6 +79,36 @@ def assess(position: dict, w3: Web3, deposit: str) -> Claim:
         denom,
     )
     return Claim(position, resolved=True, payout=payout)
+
+
+def assess_v2(position: dict, w3: Web3, deposit: str) -> Claim:
+    """Protocol V2: balances and payouts come from the PositionManager.
+
+    getPayout reverts while the market is unresolved; 0 is a losing payout.
+    """
+    pm = w3.eth.contract(
+        address=Web3.to_checksum_address(CONTRACTS["POSITION_MANAGER"]),
+        abi=POSITION_MANAGER_ABI,
+    )
+    owner = Web3.to_checksum_address(deposit)
+    held = []
+    for key in ("token_id", "unwanted_token_id"):
+        token_id = position.get(key)
+        if token_id:
+            balance = pm.functions.balanceOf(owner, int(token_id)).call()
+            if balance:
+                held.append((int(token_id), balance))
+    if not held:
+        # Nothing held: if the market resolved we can't tell from here, so
+        # probe the wanted side's payout (revert = unresolved).
+        held_probe = [(int(position["token_id"]), 0)]
+    else:
+        held_probe = held
+    try:
+        payout = sum(pm.functions.getPayout(pid, amt).call() for pid, amt in held_probe)
+    except Exception:
+        return Claim(position, resolved=False, payout=0.0)
+    return Claim(position, resolved=True, payout=payout / 1e6)
 
 
 def _open_deposit_positions(storage: PositionStorage) -> tuple[list[dict], int]:
