@@ -1,342 +1,303 @@
 #!/usr/bin/env python3
-"""Trade execution - split + CLOB sell."""
+"""Buy a position: split pUSD into YES + NO, then sell the side you don't want.
 
-import sys
-import json
-import time
-import uuid
-import asyncio
+Runs on the deposit wallet through the official SDK (gasless). Without
+``--yes`` it only prints a preview and spends nothing.
+
+Exit codes: 0 = done (or preview), 1 = refused / failed before spending,
+3 = split done but the unwanted side was not (fully) sold.
+"""
+
 import argparse
-from dataclasses import dataclass, asdict
+import asyncio
+import json
+import sys
+import uuid
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from typing import Optional
 from pathlib import Path
+from typing import Optional
 
-# Add parent to path for lib imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Load .env file from skill root directory
 from dotenv import load_dotenv
+
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-from web3 import Web3
+from lib.gamma_client import GammaClient, Market  # noqa: E402
+from lib.position_storage import PositionEntry, PositionStorage  # noqa: E402
+from lib.trading import (  # noqa: E402
+    DEFAULT_MIN_ORDER_SHARES,
+    MIN_ORDER_USD,
+    ConfigError,
+    builder_code,
+    compute_sell_floor,
+    create_client,
+    max_trade_usd,
+)
 
-from lib.wallet_manager import WalletManager
-from lib.gamma_client import GammaClient, Market
-from lib.clob_client import ClobClientWrapper
-from lib.contracts import CONTRACTS, CTF_ABI, POLYGON_CHAIN_ID
-from lib.position_storage import PositionStorage, PositionEntry
+EXIT_OK = 0
+EXIT_REFUSED = 1
+EXIT_PARTIAL = 3
 
 
 @dataclass
-class TradeResult:
-    """Result of a trade execution."""
-
-    success: bool
+class BuyPlan:
     market_id: str
-    position: str
-    amount: float
-    split_tx: Optional[str]
-    clob_order_id: Optional[str]
-    clob_filled: bool
-    error: Optional[str] = None
-    question: str = ""
-    wanted_token_id: str = ""
-    entry_price: float = 0.0
-    condition_id: Optional[str] = None
+    question: str
+    condition_id: str
+    side: str
+    amount: float  # pUSD to split = shares of each side minted
+    wanted_token_id: str
+    unwanted_token_id: str
+    wanted_price: float
+    unwanted_price: float
+    sell_unwanted: bool
+    sell_floor: float  # worst price accepted for the unwanted side
+    est_recovered: float  # pUSD back if the unwanted side sells at the floor
+    est_cost: float  # amount - est_recovered
+    est_entry_price: float  # est_cost per wanted share
 
 
-class TradeExecutor:
-    """Executes on-chain trades via split + CLOB sell."""
+@dataclass
+class BuyResult:
+    executed: bool
+    plan: BuyPlan
+    split_tx: Optional[str] = None
+    sell_order_id: Optional[str] = None
+    sold_shares: float = 0.0
+    sell_error: Optional[str] = None
+    position_id: Optional[str] = None
 
-    def __init__(self, wallet: WalletManager):
-        self.wallet = wallet
-        self._gamma = GammaClient()
 
-    def _get_web3(self) -> Web3:
-        """Get Web3 instance."""
-        return Web3(
-            Web3.HTTPProvider(
-                self.wallet.rpc_url,
-                request_kwargs={"timeout": 60, "proxies": {}}  # Bypass HTTPS_PROXY
-            )
+def plan_buy(
+    market: Market,
+    side: str,
+    amount: float,
+    *,
+    max_usd: float,
+    skip_sell: bool = False,
+    slippage_pct: float = 10.0,
+) -> BuyPlan:
+    """Validate a buy and work out what it will do. Raises ValueError if refused."""
+    side = side.upper()
+    if side not in ("YES", "NO"):
+        raise ValueError("Side must be YES or NO")
+    if amount <= 0:
+        raise ValueError("Amount must be greater than 0")
+    if amount > max_usd:
+        raise ValueError(
+            f"Amount ${amount:.2f} is above the ${max_usd:.2f} limit "
+            "(POLYCLAW_MAX_TRADE_USD)"
         )
-
-    def _split_position(
-        self,
-        condition_id: str,
-        amount_usd: float,
-    ) -> str:
-        """Split USDC into YES + NO tokens. Returns tx hash."""
-        w3 = self._get_web3()
-        address = Web3.to_checksum_address(self.wallet.address)
-        account = w3.eth.account.from_key(self.wallet.get_unlocked_key())
-
-        ctf = w3.eth.contract(
-            address=Web3.to_checksum_address(CONTRACTS["CTF"]),
-            abi=CTF_ABI,
+    if market.version != "v1":
+        raise ValueError(
+            f"Market {market.id} is on protocol {market.version!r}; polyclaw only "
+            "trades CTF (v1) markets for now"
         )
+    if market.closed or not market.active or not market.accepting_orders:
+        raise ValueError(f"Market {market.id} is not open for trading")
+    if not market.condition_id or not market.yes_token_id or not market.no_token_id:
+        raise ValueError(f"Market {market.id} is missing token or condition data")
 
-        amount_wei = int(amount_usd * 1e6)
-        condition_bytes = bytes.fromhex(
-            condition_id[2:] if condition_id.startswith("0x") else condition_id
-        )
-
-        tx = ctf.functions.splitPosition(
-            Web3.to_checksum_address(CONTRACTS["PUSD"]),
-            bytes(32),  # parentCollectionId
-            condition_bytes,
-            [1, 2],  # partition for YES, NO
-            amount_wei,
-        ).build_transaction(
-            {
-                "from": address,
-                "nonce": w3.eth.get_transaction_count(address),
-                "gas": 300000,
-                "gasPrice": w3.eth.gas_price,
-                "chainId": POLYGON_CHAIN_ID,
-            }
-        )
-
-        signed = account.sign_transaction(tx)
-        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-        print(f"Split TX submitted: {tx_hash.hex()}")
-
-        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
-        if receipt["status"] != 1:
-            raise ValueError(f"Split failed: {tx_hash.hex()}")
-
-        print(f"Split confirmed in block {receipt['blockNumber']}")
-        return tx_hash.hex()
-
-    async def buy_position(
-        self,
-        market_id: str,
-        position: str,  # "YES" or "NO"
-        amount: float,
-        skip_clob_sell: bool = False,
-    ) -> TradeResult:
-        """Buy a position on a market."""
-        position = position.upper()
-        if position not in ["YES", "NO"]:
-            return TradeResult(
-                success=False,
-                market_id=market_id,
-                position=position,
-                amount=amount,
-                split_tx=None,
-                clob_order_id=None,
-                clob_filled=False,
-                error="Position must be YES or NO",
-            )
-
-        # Check wallet
-        if not self.wallet.is_unlocked:
-            return TradeResult(
-                success=False,
-                market_id=market_id,
-                position=position,
-                amount=amount,
-                split_tx=None,
-                clob_order_id=None,
-                clob_filled=False,
-                error="Wallet not unlocked",
-            )
-
-        # Check balance
-        balances = self.wallet.get_balances()
-        if balances.pusd < amount:
-            return TradeResult(
-                success=False,
-                market_id=market_id,
-                position=position,
-                amount=amount,
-                split_tx=None,
-                clob_order_id=None,
-                clob_filled=False,
-                error=(
-                    f"Insufficient pUSD: have {balances.pusd:.2f}, need {amount:.2f}. "
-                    f"USDC.e balance: {balances.usdc_e:.2f} — wrap via CollateralOnramp "
-                    f"(0x9307...B8ee) if needed."
-                ),
-            )
-
-        # Get market info
-        try:
-            market = await self._gamma.get_market(market_id)
-        except Exception as e:
-            return TradeResult(
-                success=False,
-                market_id=market_id,
-                position=position,
-                amount=amount,
-                split_tx=None,
-                clob_order_id=None,
-                clob_filled=False,
-                error=f"Failed to fetch market: {e}",
-            )
-
-        # Determine tokens and prices
-        wanted_token = market.yes_token_id if position == "YES" else market.no_token_id
-        unwanted_token = market.no_token_id if position == "YES" else market.yes_token_id
-        wanted_price = market.yes_price if position == "YES" else market.no_price
-        unwanted_price = market.no_price if position == "YES" else market.yes_price
-
-        print(f"Market: {market.question}")
-        print(f"Buying: {position} @ {wanted_price:.2f}")
-        print(f"Will sell: {'NO' if position == 'YES' else 'YES'} @ ~{unwanted_price:.2f}")
-
-        # Execute split
-        try:
-            split_tx = self._split_position(market.condition_id, amount)
-        except Exception as e:
-            return TradeResult(
-                success=False,
-                market_id=market_id,
-                position=position,
-                amount=amount,
-                split_tx=None,
-                clob_order_id=None,
-                clob_filled=False,
-                error=f"Split failed: {e}",
-            )
-
-        time.sleep(2)  # Wait for chain confirmation
-
-        # Sell unwanted side via CLOB
-        clob_order_id = None
-        clob_filled = False
-        clob_error = None
-
-        if not skip_clob_sell and unwanted_token:
-            print("Selling unwanted tokens via CLOB...")
-            try:
-                clob = ClobClientWrapper(
-                    self.wallet.get_unlocked_key(),
-                    self.wallet.address,
-                )
-                clob_order_id, clob_filled, clob_error = clob.sell_fok(
-                    unwanted_token,
-                    amount,  # Same number of tokens as USDC spent
-                    unwanted_price,
-                )
-                if clob_filled:
-                    print(f"CLOB sell filled: {clob_order_id}")
-                else:
-                    print(f"CLOB sell failed: {clob_error}")
-            except Exception as e:
-                clob_error = str(e)
-                print(f"CLOB error: {clob_error}")
-
-        return TradeResult(
-            success=True,  # Split succeeded
-            market_id=market_id,
-            position=position,
-            amount=amount,
-            split_tx=split_tx,
-            clob_order_id=clob_order_id,
-            clob_filled=clob_filled,
-            error=clob_error,
-            question=market.question,
-            wanted_token_id=wanted_token,
-            entry_price=wanted_price,
-            condition_id=market.condition_id,
-        )
-
-
-async def cmd_buy(args):
-    """Execute buy command."""
-    wallet = WalletManager()
-
-    if not wallet.is_unlocked:
-        print("Error: No wallet configured")
-        print("Set POLYCLAW_PRIVATE_KEY environment variable.")
-        return 1
-
-    try:
-        executor = TradeExecutor(wallet)
-        result = await executor.buy_position(
-            args.market_id,
-            args.position,
-            args.amount,
-            skip_clob_sell=args.skip_sell,
-        )
-
-        print("\n" + "=" * 50)
-        if result.success:
-            print("Trade executed successfully!")
-            print(f"  Market: {result.question[:50]}...")
-            print(f"  Position: {result.position}")
-            print(f"  Amount: ${result.amount:.2f}")
-            print(f"  Split TX: {result.split_tx}")
-            if result.clob_filled:
-                print(f"  CLOB Order: {result.clob_order_id} (FILLED)")
-            elif result.clob_order_id:
-                print(f"  CLOB Order: {result.clob_order_id} (pending)")
-            elif args.skip_sell:
-                print(f"  CLOB: Skipped (--skip-sell)")
-                print(f"  Note: You have both YES and NO tokens")
-            else:
-                print(f"  CLOB: Failed - {result.error}")
-                unwanted = "NO" if result.position == "YES" else "YES"
-                print(f"  Note: You have {result.amount:.0f} {unwanted} tokens to sell manually")
-
-            # Record position
-            storage = PositionStorage()
-            position_entry = PositionEntry(
-                position_id=str(uuid.uuid4()),
-                market_id=result.market_id,
-                question=result.question,
-                position=result.position,
-                token_id=result.wanted_token_id,
-                entry_time=datetime.now(timezone.utc).isoformat(),
-                entry_amount=result.amount,
-                entry_price=result.entry_price,
-                split_tx=result.split_tx,
-                clob_order_id=result.clob_order_id,
-                clob_filled=result.clob_filled,
-                condition_id=result.condition_id,
-            )
-            storage.add(position_entry)
-            print(f"  Position ID: {position_entry.position_id[:12]}...")
-        else:
-            print(f"Trade failed: {result.error}")
-            return 1
-
-        # Output JSON if requested
-        if args.json:
-            print("\nJSON Result:")
-            print(json.dumps(asdict(result), indent=2))
-
-        return 0
-
-    finally:
-        wallet.lock()
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Trade execution")
-    parser.add_argument("--json", action="store_true", help="JSON output")
-    subparsers = parser.add_subparsers(dest="command", help="Commands")
-
-    # Buy
-    buy_parser = subparsers.add_parser("buy", help="Buy a position")
-    buy_parser.add_argument("market_id", help="Market ID")
-    buy_parser.add_argument("position", choices=["YES", "NO", "yes", "no"], help="YES or NO")
-    buy_parser.add_argument("amount", type=float, help="Amount in USD")
-    buy_parser.add_argument(
-        "--skip-sell", action="store_true",
-        help="Skip selling unwanted side (keep both YES and NO)"
+    wanted, unwanted = (
+        (market.yes_token_id, market.no_token_id)
+        if side == "YES"
+        else (market.no_token_id, market.yes_token_id)
+    )
+    wanted_price, unwanted_price = (
+        (market.yes_price, market.no_price)
+        if side == "YES"
+        else (market.no_price, market.yes_price)
     )
 
-    args = parser.parse_args()
+    sell_floor = compute_sell_floor(unwanted_price, slippage_pct)
+    if not skip_sell:
+        min_shares = market.order_min_size or DEFAULT_MIN_ORDER_SHARES
+        if amount < min_shares:
+            raise ValueError(
+                f"${amount:.2f} mints {amount:g} shares of each side, below this "
+                f"market's {min_shares:g}-share minimum order. Use at least "
+                f"${min_shares:g}, or --skip-sell to keep both sides."
+            )
+        if amount * sell_floor < MIN_ORDER_USD:
+            raise ValueError(
+                f"The unwanted side would sell for under ${MIN_ORDER_USD:g} "
+                "(Polymarket minimum). Use a larger amount or --skip-sell."
+            )
 
+    recovered = 0.0 if skip_sell else round(amount * sell_floor, 4)
+    cost = round(amount - recovered, 4)
+    return BuyPlan(
+        market_id=market.id,
+        question=market.question,
+        condition_id=market.condition_id,
+        side=side,
+        amount=amount,
+        wanted_token_id=wanted,
+        unwanted_token_id=unwanted,
+        wanted_price=wanted_price,
+        unwanted_price=unwanted_price,
+        sell_unwanted=not skip_sell,
+        sell_floor=sell_floor,
+        est_recovered=recovered,
+        est_cost=cost,
+        est_entry_price=round(cost / amount, 4),
+    )
+
+
+def execute_buy(client, plan: BuyPlan, storage: PositionStorage) -> BuyResult:
+    """Split on the deposit wallet, sell the unwanted side, record the position."""
+    result = BuyResult(executed=True, plan=plan)
+
+    handle = client.split_position(
+        condition_id=plan.condition_id,
+        amount=int(round(plan.amount * 1e6)),  # pUSD base units
+    )
+    result.split_tx = handle.wait().transaction_hash
+
+    if plan.sell_unwanted:
+        try:
+            resp = client.place_market_order(
+                asset_id=plan.unwanted_token_id,
+                side="SELL",
+                shares=plan.amount,
+                min_price=plan.sell_floor,
+                order_type="FAK",
+                builder_code=builder_code(),
+            )
+            if getattr(resp, "ok", False):
+                result.sell_order_id = resp.order_id
+                result.sold_shares = float(resp.making_amount)
+                if result.sold_shares < plan.amount:
+                    result.sell_error = (
+                        f"Partial fill: sold {result.sold_shares:g} of {plan.amount:g}"
+                    )
+            else:
+                result.sell_error = getattr(resp, "message", None) or "Order rejected"
+        except Exception as e:  # split already happened; report, don't raise
+            result.sell_error = str(e)
+
+    entry = PositionEntry(
+        position_id=str(uuid.uuid4()),
+        market_id=plan.market_id,
+        question=plan.question,
+        position=plan.side,
+        token_id=plan.wanted_token_id,
+        entry_time=datetime.now(timezone.utc).isoformat(),
+        entry_amount=plan.amount,
+        entry_price=plan.est_entry_price,
+        split_tx=result.split_tx,
+        clob_order_id=result.sell_order_id,
+        clob_filled=result.sold_shares > 0,
+        condition_id=plan.condition_id,
+        holder="deposit",
+        unwanted_token_id=plan.unwanted_token_id,
+        sold_shares=result.sold_shares,
+    )
+    storage.add(entry)
+    result.position_id = entry.position_id
+    return result
+
+
+def _print_plan(plan: BuyPlan) -> None:
+    other = "NO" if plan.side == "YES" else "YES"
+    print(f"Market:   {plan.question}")
+    print(f"Buy:      {plan.side} with ${plan.amount:.2f} pUSD (deposit wallet)")
+    print(f"Step 1:   split ${plan.amount:.2f} -> {plan.amount:g} YES + {plan.amount:g} NO")
+    if plan.sell_unwanted:
+        print(
+            f"Step 2:   sell {plan.amount:g} {other} at >= {plan.sell_floor:.2f} "
+            f"(now ~{plan.unwanted_price:.2f})"
+        )
+        print(
+            f"Estimate: cost <= ${plan.est_cost:.2f}, "
+            f"entry <= {plan.est_entry_price:.4f} per {plan.side} share"
+        )
+    else:
+        print(f"Step 2:   skipped (--skip-sell): you keep {plan.amount:g} {other}")
+
+
+async def cmd_buy(args) -> int:
+    try:
+        market = await GammaClient().get_market(args.market_id)
+        plan = plan_buy(
+            market,
+            args.position,
+            args.amount,
+            max_usd=max_trade_usd(),
+            skip_sell=args.skip_sell,
+            slippage_pct=args.slippage,
+        )
+    except (ValueError, ConfigError) as e:
+        print(f"Refused: {e}", file=sys.stderr)
+        return EXIT_REFUSED
+    except Exception as e:
+        print(f"Error: could not load market {args.market_id}: {e}", file=sys.stderr)
+        return EXIT_REFUSED
+
+    if not args.yes:
+        if args.json:
+            print(json.dumps({"executed": False, "plan": asdict(plan)}, indent=2))
+        else:
+            _print_plan(plan)
+            print("\nPREVIEW ONLY - nothing was spent. Re-run with --yes to execute.")
+        return EXIT_OK
+
+    try:
+        client = create_client()
+    except ConfigError as e:
+        print(f"Refused: {e}", file=sys.stderr)
+        return EXIT_REFUSED
+    except Exception as e:
+        print(f"Error: could not connect the deposit wallet: {e}", file=sys.stderr)
+        return EXIT_REFUSED
+
+    try:
+        result = execute_buy(client, plan, PositionStorage())
+    except Exception as e:
+        print(f"Split failed, nothing was bought: {e}", file=sys.stderr)
+        return EXIT_REFUSED
+
+    if args.json:
+        print(json.dumps(asdict(result), indent=2))
+    else:
+        _print_plan(plan)
+        print(f"\nSplit tx:    {result.split_tx}")
+        if plan.sell_unwanted:
+            print(f"Sell order:  {result.sell_order_id or '-'} sold {result.sold_shares:g}")
+        print(f"Position ID: {result.position_id}")
+        if result.sell_error:
+            other = "NO" if plan.side == "YES" else "YES"
+            left = plan.amount - result.sold_shares
+            print(f"\nWARNING: {result.sell_error}")
+            print(f"You still hold {left:g} {other} in the deposit wallet (hedged, not lost).")
+    return EXIT_PARTIAL if result.sell_error else EXIT_OK
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Buy a Polymarket position")
+    sub = parser.add_subparsers(dest="command")
+    buy = sub.add_parser("buy", help="Buy YES or NO on a market")
+    buy.add_argument("market_id", help="Gamma market ID")
+    buy.add_argument("position", type=str.upper, choices=["YES", "NO"])
+    buy.add_argument("amount", type=float, help="pUSD to spend on the split")
+    buy.add_argument("--yes", action="store_true", help="Execute (default: preview only)")
+    buy.add_argument("--skip-sell", action="store_true", help="Keep both sides")
+    buy.add_argument(
+        "--slippage",
+        type=float,
+        default=10.0,
+        help="Max %% below the current price for the unwanted-side sell (1-50, default 10)",
+    )
+    buy.add_argument("--json", action="store_true", help="JSON output")
+
+    args = parser.parse_args()
     if args.command == "buy":
         return asyncio.run(cmd_buy(args))
-    else:
-        parser.print_help()
-        return 1
+    parser.print_help()
+    return EXIT_REFUSED
 
 
 if __name__ == "__main__":
-    sys.exit(main() or 0)
+    sys.exit(main())
