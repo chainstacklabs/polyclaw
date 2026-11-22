@@ -2,47 +2,70 @@
 
 **Trading-enabled Polymarket skill for OpenClaw.**
 
-Browse prediction markets, execute trades on-chain, and discover hedging opportunities using LLM-powered analysis. Full trading capability via split + CLOB execution on Polygon.
+Browse prediction markets, trade from your Polymarket deposit wallet, redeem winnings, and find hedging opportunities with LLM-powered analysis. Trades run on Polygon through Polymarket's official SDK.
 
-> **Disclaimer:** This software is provided as-is for educational and experimental purposes. It is not financial advice. Trading prediction markets involves risk of loss. This code has not been audited. Use at your own risk and only with funds you can afford to lose.
+> **Disclaimer:** This software is provided as-is for educational and experimental purposes. It is not financial advice. Trading prediction markets involves risk of loss. This code has not been audited. Use at your own risk and only with funds you can afford to lose. Polymarket restricts trading in some regions; check that you're allowed to trade where you are.
 
 📺 **[Watch the video explainer](https://www.youtube.com/watch?v=s_uP802NVTE)**
 
 ## Features
 
 ### Market browsing
-- `polyclaw markets trending` — Top markets by 24h volume
-- `polyclaw markets search "query"` — Search markets by keyword
-- `polyclaw market <id>` — Market details with prices
+- `polyclaw markets trending`: top markets by 24h volume
+- `polyclaw markets search "query"`: search markets by keyword
+- `polyclaw market <id>`: market details with prices
 
 ### Trading
-- `polyclaw buy <market_id> YES <amount>` — Buy YES position
-- `polyclaw buy <market_id> NO <amount>` — Buy NO position
-- Split + CLOB execution (split pUSD → YES+NO, sell unwanted side)
+- `polyclaw buy <market_id> YES|NO <amount>`: preview a buy. Add `--yes` to execute it.
+- Split pUSD into YES+NO shares, then sell the side you don't want.
+- Guardrails:
+  - The default run is a preview.
+  - A spend limit (`POLYCLAW_MAX_TRADE_USD`, default $50).
+  - Polymarket's minimum order sizes are checked before anything is spent.
 
-### Position tracking
-- `polyclaw positions` — List open positions with live P&L
-- `polyclaw position <id>` — Detailed position view
-- Positions tracked locally in `~/.openclaw/polyclaw/positions.json`
+### Positions
+- `polyclaw positions`: open positions with live P&L
+- `polyclaw redeem list` / `redeem all`: claim pUSD from resolved markets (gasless)
+- Positions are tracked locally in `~/.openclaw/polyclaw/positions.json`
 
-### Wallet management
-- `polyclaw wallet status` — Show address, POL / pUSD / USDC.e balances
-- `polyclaw wallet approve` — Set Polymarket contract approvals (one-time)
+### Wallet
+- `polyclaw wallet setup`: create your deposit wallet and set trading approvals (free)
+- `polyclaw wallet status`: addresses, balances, approval state
+- `polyclaw wallet deposit <amount>`: move pUSD from the signing wallet to the deposit wallet
 
 ### Hedge discovery
-- `polyclaw hedge scan` — Scan trending markets for hedging opportunities
-- `polyclaw hedge scan --query "topic"` — Scan markets matching a query
-- `polyclaw hedge analyze <id1> <id2>` — Analyze specific market pair
+- `polyclaw hedge scan`: scan trending markets for hedging opportunities
+- `polyclaw hedge scan --query "topic"`: scan markets matching a query
+- `polyclaw hedge analyze <id1> <id2>`: analyze a specific market pair
 
-Uses LLM-powered contrapositive logic to find covering portfolios. Only logically necessary implications are accepted — correlations and "likely" relationships are rejected.
+The hedge scan uses LLM-powered contrapositive logic to find covering portfolios. It accepts only logically necessary implications and rejects correlations and "likely" relationships.
 
-**Coverage tiers:** T1 (≥95%), T2 (90-95%), T3 (85-90%)
+**Coverage tiers:** T1 (≥95%), T2 (90–95%), T3 (85–90%)
+
+## How trading works
+
+Polymarket requires API traders to use a **deposit wallet**. It's a personal smart wallet owned by your signing key, and Polymarket's relayer pays its gas. PolyClaw creates it for you on `wallet setup`.
+
+A buy has two steps:
+
+1. **Split.** `$N` pUSD becomes `N` YES and `N` NO shares.
+2. **Sell.** The side you don't want is sold right away with a fill-and-kill order, which won't sell below the floor shown in the preview.
+
+**Example: buying YES at $0.65**
+
+```
+Split:  $10 pUSD → 10 YES + 10 NO
+Sell:   10 NO at ≥ $0.31 (10% under the $0.35 price) → about $3.10–3.50 back
+Net:    10 YES for about $6.50–6.90
+```
+
+If the sell doesn't fill, `buy` exits with code `3`. You then hold both sides, which is hedged, not lost.
 
 ## Quick start
 
-### 1. Install skill
+### 1. Install the skill
 
-**Option A: Install from ClawHub (recommended)**
+**Option A: install from ClawHub (recommended)**
 
 ```bash
 clawhub install polyclaw
@@ -50,7 +73,7 @@ cd ~/.openclaw/skills/polyclaw
 uv sync
 ```
 
-**Option B: Manual install**
+**Option B: manual install**
 
 ```bash
 cp -r polyclaw ~/.openclaw/skills/
@@ -60,7 +83,7 @@ uv sync
 
 ### 2. Configure environment variables
 
-Add the following to your `openclaw.json` under `skills.entries.polyclaw.env`:
+Add these to your `openclaw.json` under `skills.entries.polyclaw.env`:
 
 ```json
 "polyclaw": {
@@ -68,280 +91,133 @@ Add the following to your `openclaw.json` under `skills.entries.polyclaw.env`:
   "env": {
     "CHAINSTACK_NODE": "https://polygon-mainnet.core.chainstack.com/YOUR_KEY",
     "POLYCLAW_PRIVATE_KEY": "0x...",
+    "POLYCLAW_RELAYER_API_KEY": "...",
     "OPENROUTER_API_KEY": "sk-or-v1-..."
   }
 }
 ```
 
 **Where to get the keys:**
-- **Chainstack node** — [Sign up at Chainstack](https://console.chainstack.com) (free tier available, sign up with GitHub, X, or Google)
-- **OpenRouter API key** — [Create key at OpenRouter](https://openrouter.ai/settings/keys)
+- **Polygon RPC endpoint**: deploy a Polygon node on [Chainstack](https://chainstack.com). A free plan is available, and you can sign up with GitHub, X, or Google.
+- **Relayer API key**: sign in to polymarket.com with the wallet that owns `POLYCLAW_PRIVATE_KEY`, then create a key at polymarket.com/settings?tab=api-keys. The key works only for that wallet.
+- **OpenRouter API key**: [create a key at OpenRouter](https://openrouter.ai/settings/keys). You need it only for `hedge`.
 
-**Security warning:** Keep only small amounts in this wallet. Withdraw regularly to a secure wallet.
+**Security:** the signing key sits in an environment variable. Keep only small amounts in this wallet.
 
-> **Looking for standalone CLI usage?** This skill is designed for OpenClaw. For standalone CLI usage without OpenClaw, see [polymarket-alpha-bot](https://github.com/chainstacklabs/polymarket-alpha-bot).
+> **Looking for a full app with a dashboard?** See [polymarket-alpha-bot](https://github.com/chainstacklabs/polymarket-alpha-bot).
 
-### 3. First-time setup (required for trading)
-
-Before your first trade, set Polymarket contract approvals (one-time, costs ~0.01 POL in gas):
+### 3. Set up and fund the deposit wallet
 
 ```bash
-uv run python scripts/polyclaw.py wallet approve
+uv run python scripts/polyclaw.py wallet setup     # creates the deposit wallet + approvals
+uv run python scripts/polyclaw.py wallet status    # shows the deposit wallet address
 ```
 
-This submits 6 approval transactions to Polygon. You only need to do this once per wallet.
-
-### 4. Run commands
+Send pUSD to the **deposit wallet** address. If your pUSD is on the signing wallet, move it:
 
 ```bash
-# Browse markets
+uv run python scripts/polyclaw.py wallet deposit 20          # preview
+uv run python scripts/polyclaw.py wallet deposit 20 --yes    # send; needs a little POL for gas
+```
+
+### 4. Trade
+
+```bash
 uv run python scripts/polyclaw.py markets trending
-uv run python scripts/polyclaw.py markets search "election"
-
-# Find hedging opportunities
-uv run python scripts/polyclaw.py hedge scan --limit 10
-
-# Check wallet and trade
-uv run python scripts/polyclaw.py wallet status
-uv run python scripts/polyclaw.py buy <market_id> YES 50
+uv run python scripts/polyclaw.py buy <market_id> YES 20          # preview
+uv run python scripts/polyclaw.py buy <market_id> YES 20 --yes    # execute
+uv run python scripts/polyclaw.py positions
 ```
 
 ## Example prompts
 
-Natural language prompts you can use with OpenClaw:
+Natural-language prompts you can use with OpenClaw:
 
-### 1. Browse trending markets
-```
-What's trending on Polymarket?
-```
-Returns market IDs, questions, prices, and volume.
+- **"What's trending on Polymarket?"**: market IDs, questions, prices, and volume.
+- **"Show me details for market `<market_id>`"**: full market info.
+- **"What's my PolyClaw wallet balance?"**: deposit wallet and signing wallet balances.
+- **"Buy $20 YES on market `<market_id>`"**: the agent shows a preview and asks you to confirm before it spends anything.
+- **"Find me some hedging opportunities on Polymarket"**: LLM analysis of market pairs. This takes a few minutes.
+- **"Show my PolyClaw positions"**: entry price, current price, and P&L.
+- **"Claim my resolved Polymarket positions"**: redeems resolved positions into pUSD.
 
-### 2. Get market details
-```
-Show me details for market <market_id>
-```
-Use the market ID from Polymarket URL or from the trending markets response above.
+## Upgrading from PolyClaw 0.1.0
 
-Returns full market info with link to Polymarket.
+Version 0.1.0 traded from the signing wallet directly. After Polymarket's April 28, 2026 upgrade, its `buy` split pUSD in a way that produced tokens no order book accepts, and then the sell failed. Your money is still there:
 
-### 3. Check wallet status
+```bash
+uv run python scripts/polyclaw.py recover scan        # read-only: what's left on the signing wallet
+uv run python scripts/polyclaw.py recover run         # preview
+uv run python scripts/polyclaw.py recover run --yes   # merge back to pUSD, or redeem if resolved
 ```
-What's my PolyClaw wallet balance?
-```
-Shows address, POL balance (for gas), pUSD balance (collateral), and USDC.e balance (wrap into pUSD via the Collateral Onramp if you need it).
 
-### 4. Direct trading
-If you have your own conviction on a market:
-```
-Buy $50 YES on market <market_id>
-```
-Executes split + CLOB flow and records position.
-
-### 5. Hedge discovery flow
-Find LLM-analyzed arbitrage opportunities:
-```
-Find me some hedging opportunities on Polymarket
-```
-or more specifically:
-```
-Run hedge scan limit 10
-```
-> **Note:** This takes a few minutes. The skill fetches open markets and sends pairs to the LLM for logical implication analysis.
-
-Review the results — you'll see coverage tiers (T1 = 95%+, T2 = 90-95%, T3 = 85-90%) and the market pairs where you can take hedged positions.
-
-### 6. Check positions
-```
-Show my PolyClaw positions
-```
-Lists open positions with entry price, current price, and P&L.
-
-### 7. Sell early
-To exit a position before the market resolves:
-```
-Sell my YES position on market <market_id>
-```
-Sells your tokens on the CLOB order book at current market price.
-
-### Full flow example
-
-1. **"What's trending on Polymarket?"** → Get market IDs
-2. **"Run hedge scan limit 10"** → Wait for LLM analysis
-3. Review hedge opportunities with coverage tiers
-4. **"Buy $25 YES on market abc123"** → Take position on target market
-5. **"Buy $25 NO on market xyz789"** → Take position on covering market
-6. **"Show my PolyClaw positions"** → Verify entries and track P&L
+`recover` sends transactions from the signing wallet, so it needs a little POL for gas. It also handles positions bought before the upgrade.
 
 ## Environment variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `CHAINSTACK_NODE` | Yes (trading) | Polygon RPC URL |
-| `OPENROUTER_API_KEY` | Yes (hedge) | OpenRouter API key for LLM |
-| `POLYCLAW_PRIVATE_KEY` | Yes (trading) | EVM private key (hex) |
-| `HTTPS_PROXY` | No | Only needed if CLOB orders fail (see [troubleshooting](#clob-order-failed--ip-blocked-by-cloudflare)) |
-| `CLOB_MAX_RETRIES` | No | Max retries for CLOB orders (default: 5) |
+| `CHAINSTACK_NODE` | Wallet, trading | Polygon RPC endpoint URL |
+| `POLYCLAW_PRIVATE_KEY` | Trading | Signing key that owns the deposit wallet |
+| `POLYCLAW_RELAYER_API_KEY` | Trading | Relayer API key minted for the signing wallet |
+| `POLYCLAW_RELAYER_ADDRESS` | No | Address the relayer key belongs to; defaults to the signing wallet |
+| `POLYCLAW_MAX_TRADE_USD` | No | Largest single buy, in USD; defaults to 50 |
+| `POLY_BUILDER_CODE` | No | Polymarket builder code (bytes32) attached to orders |
+| `OPENROUTER_API_KEY` | Hedge | OpenRouter API key |
+| `POLYCLAW_HEDGE_MODEL` | No | OpenRouter model for `hedge`; defaults to `qwen/qwen3-235b-a22b-2507` |
 
 ## Directory structure
 
 ```
 polyclaw/
-├── SKILL.md                     # OpenClaw skill manifest
-├── README.md                    # This file
-├── pyproject.toml               # Python dependencies (uv)
-│
+├── SKILL.md                 # OpenClaw skill manifest and agent rules
+├── pyproject.toml / uv.lock # Python dependencies (uv)
 ├── scripts/
-│   ├── polyclaw.py              # CLI dispatcher
-│   ├── markets.py               # Market browsing (Gamma API)
-│   ├── wallet.py                # Wallet management
-│   ├── trade.py                 # Split + CLOB execution
-│   ├── positions.py             # Position tracking + P&L
-│   └── hedge.py                 # LLM hedge discovery
-│
-└── lib/
-    ├── __init__.py              # Package marker
-    ├── clob_client.py           # py-clob-client wrapper
-    ├── contracts.py             # CTF ABI + addresses
-    ├── coverage.py              # Coverage calculation + tiers
-    ├── gamma_client.py          # Polymarket Gamma API client
-    ├── llm_client.py            # OpenRouter LLM client
-    ├── position_storage.py      # Position JSON storage
-    └── wallet_manager.py        # Wallet lifecycle
+│   ├── polyclaw.py          # CLI dispatcher
+│   ├── markets.py           # Market browsing (Gamma API)
+│   ├── wallet.py            # Deposit wallet setup, status, deposit
+│   ├── trade.py             # Buy: split + sell, with preview and limits
+│   ├── positions.py         # Position tracking + P&L
+│   ├── redeem.py            # Redeem resolved positions
+│   ├── recover.py           # Clean up tokens from PolyClaw 0.1.0
+│   └── hedge.py             # LLM hedge discovery
+├── lib/
+│   ├── trading.py           # Polymarket SDK client and guardrail settings
+│   ├── wallet_manager.py    # Balances and approval state
+│   ├── legacy.py            # Signing-wallet token scan, merge, redeem
+│   ├── gamma_client.py      # Gamma API client
+│   ├── contracts.py         # Addresses + ABIs for direct reads
+│   ├── coverage.py          # Coverage calculation + tiers
+│   ├── llm_client.py        # OpenRouter client
+│   └── position_storage.py  # Position JSON storage
+└── tests/                   # Offline tests: uv run pytest
 ```
-
-## Trading flow
-
-1. **Set approvals** (one-time): `polyclaw wallet approve`
-2. **Execute trade**: `polyclaw buy <market_id> YES 50`
-   - Split $50 pUSD → 50 YES + 50 NO tokens
-   - Sell 50 NO tokens via CLOB → recover ~$15 (at 30¢)
-   - Result: 50 YES tokens, net cost ~$35
-3. **Track position**: `polyclaw positions`
-
-### Understanding the split mechanism
-
-Polymarket uses a **Conditional Token Framework (CTF)**. You can't directly "buy YES tokens" — instead:
-
-1. **Split**: Deposit pUSD into the CTF contract, which mints equal amounts of YES + NO tokens
-2. **Sell unwanted**: Sell the side you don't want via the CLOB order book
-3. **Result**: You hold your desired position, having recovered partial cost from selling the other side
-
-**Example** (buying YES at $0.65):
-```
-Split:  $2 pUSD → 2 YES + 2 NO tokens
-Sell:   2 NO tokens @ $0.35 → recover ~$0.70
-Net:    Paid ~$1.30 for 2 YES tokens (effective price: $0.65)
-```
-
-### CLOB order IDs
-
-When you execute a trade, the CLOB sell returns an **order ID** like:
-```
-0xc93d6214515b2436feb684854c98d314ad19111d7ab822a9c885d61588d5beaa
-```
-
-This is **not a blockchain transaction hash** — it's an off-chain Polymarket order book identifier. CLOB orders are matched off-chain and settled in batches on-chain.
-
-**What you can do with the order ID:**
-
-Query order details via the CLOB API (requires wallet authentication):
-```python
-from py_clob_client.client import ClobClient
-
-client = ClobClient("https://clob.polymarket.com", key=private_key, chain_id=137)
-creds = client.create_or_derive_api_creds()
-client.set_api_creds(creds)
-
-order = client.get_order("0xc93d6214...")
-# Returns: id, market, side, price, size_matched, status, created_at, etc.
-```
-
-**API endpoint:** `GET https://clob.polymarket.com/data/order/<order_hash>`
-
-**Response fields:** `id`, `market`, `asset_id`, `side`, `price`, `original_size`, `size_matched`, `status` (MATCHED/LIVE/CANCELLED), `type` (FOK/GTC), `created_at`, `maker_address`, `associate_trades`
-
-**Note:** There's no public explorer for CLOB order IDs. To view your trade history, connect your wallet at polymarket.com → Portfolio → Activity.
-
-## Hedge discovery flow
-
-1. **Scan markets**: `polyclaw hedge scan --query "election"`
-2. **Review output**: Table shows Tier, Coverage, Cost, Target, Cover
-3. **Analyze pair**: `polyclaw hedge analyze <id1> <id2>`
-4. **Execute if profitable**: Buy both positions manually
-
-**Coverage tiers:**
-- **Tier 1 (HIGH):** ≥95% coverage — near-arbitrage
-- **Tier 2 (GOOD):** 90-95% — strong hedges
-- **Tier 3 (MODERATE):** 85-90% — decent but noticeable risk
-- **Tier 4 (LOW):** <85% — speculative (filtered by default)
-
-## Polymarket contracts (Polygon mainnet, CLOB V2)
-
-Post 2026-04-28 cutover. Collateral is pUSD; USDC.e is wrapped 1:1 via the Collateral Onramp.
-
-| Contract | Address |
-|----------|---------|
-| pUSD (collateral) | `0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB` |
-| USDC.e (onramp input) | `0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174` |
-| Collateral Onramp (`wrap()`) | `0x93070a847efEf7F70739046A929D47a521F5B8ee` |
-| CTF | `0x4D97DCd97eC945f40cF65F87097ACe5EA0476045` |
-| CTF Exchange (V2) | `0xE111180000d2663C0091e4f400237545B87B996B` |
-| Neg Risk CTF Exchange (V2) | `0xe2222d279d744050d28e00520010520000310F59` |
-| Neg Risk Adapter | `0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296` |
 
 ## Troubleshooting
 
-### "No wallet available"
-Set the `POLYCLAW_PRIVATE_KEY` environment variable:
-```bash
-export POLYCLAW_PRIVATE_KEY="0x..."
-```
+### "Set POLYCLAW_RELAYER_API_KEY"
+Create a Relayer API key at polymarket.com/settings?tab=api-keys while signed in with the signing wallet.
 
-### "CHAINSTACK_NODE not set"
-Set the Polygon RPC URL:
-```bash
-export CHAINSTACK_NODE="https://polygon-mainnet.core.chainstack.com/YOUR_KEY"
-```
-
-### "OPENROUTER_API_KEY not set"
-Required for hedge commands. Get a free key at https://openrouter.ai/settings/keys:
-```bash
-export OPENROUTER_API_KEY="sk-or-v1-..."
-```
-
-### Hedge scan finds 0 results or spurious results
-Model quality matters. The default `nvidia/nemotron-nano-9b-v2:free` works well. If using a different model:
-- Some models find spurious correlations (false positives)
-- Some models return empty responses (DeepSeek R1 uses `reasoning_content`)
-- Try `--model nvidia/nemotron-nano-9b-v2:free` explicitly
+### "maker address not allowed"
+Polymarket rejects orders from bare wallets. This version always trades from the deposit wallet. Make sure you're on the latest version and have run `wallet setup`.
 
 ### "Insufficient pUSD"
-Trades require pUSD (Polymarket USD), not USDC.e. Check balances with:
+Run `wallet status`. Your buying power is the deposit wallet's pUSD. If you only hold USDC.e, wrap it 1:1 into pUSD first with Polymarket's CollateralOnramp (`0x93070a847efEf7F70739046A929D47a521F5B8ee`).
+
+### "below this market's 5-share minimum"
+Polymarket's minimum order is 5 shares on most markets. Buy at least $5, or pass `--skip-sell` to keep both sides.
+
+### `buy` exited with code 3
+The split worked but the sell didn't fill, usually because of thin liquidity. You hold both sides. Keep them until the market resolves, then run `redeem`.
+
+### Hedge scan finds no results or odd results
+Model quality matters. Try another model with `--model` or `POLYCLAW_HEDGE_MODEL`.
+
+## Development
+
 ```bash
-uv run python scripts/polyclaw.py wallet status
-```
-If you have USDC.e but no pUSD, wrap it 1:1 via the Collateral Onramp's `wrap()` function (`0x9307...B8ee`). The polymarket.com UI does this automatically; API-only users wrap manually.
-
-### "CLOB order failed" / "IP blocked by Cloudflare"
-
-Polymarket's CLOB API uses Cloudflare protection that blocks POST requests from many IPs. The solution is a **rotating residential proxy** with retry logic.
-
-**Recommended setup (IPRoyal or similar):**
-```bash
-export HTTPS_PROXY="http://user:pass@geo.iproyal.com:12321"
-export CLOB_MAX_RETRIES=10
-```
-
-The CLOB client automatically retries with new IPs until finding an unblocked one. Typically succeeds within 5-10 attempts.
-
-**Alternative options:**
-1. **Sell manually** — Your split succeeded. Go to polymarket.com to sell tokens
-2. **Use `--skip-sell`** — Keep both tokens: `polyclaw buy <id> YES 50 --skip-sell`
-
-### "Approvals not set"
-Run the one-time approval setup:
-```bash
-uv run python scripts/polyclaw.py wallet approve
+uv sync
+uv run pytest
 ```
 
 ## License
@@ -352,6 +228,6 @@ Apache 2.0
 
 Based on [polymarket-alpha-bot](https://github.com/chainstacklabs/polymarket-alpha-bot) by Chainstack.
 
-- **Chainstack** — Polygon RPC infrastructure
-- **Polymarket** — Prediction market platform
-- **OpenRouter** — LLM API for hedge discovery
+- **Chainstack**: Polygon RPC infrastructure
+- **Polymarket**: prediction market platform and official SDK
+- **OpenRouter**: LLM API for hedge discovery
