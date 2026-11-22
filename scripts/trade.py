@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-from lib.gamma_client import GammaClient, Market  # noqa: E402
+from lib.gamma_client import SUPPORTED_VERSIONS, GammaClient, Market  # noqa: E402
 from lib.position_storage import PositionEntry, PositionStorage  # noqa: E402
 from lib.trading import (  # noqa: E402
     DEFAULT_MIN_ORDER_SHARES,
@@ -46,6 +46,7 @@ class BuyPlan:
     market_id: str
     question: str
     condition_id: str
+    protocol: str  # "v1" (CTF) or "v2" (Protocol V2); the SDK routes both
     side: str
     amount: float  # pUSD to split = shares of each side minted
     wanted_token_id: str
@@ -90,10 +91,10 @@ def plan_buy(
             f"Amount ${amount:.2f} is above the ${max_usd:.2f} limit "
             "(POLYCLAW_MAX_TRADE_USD)"
         )
-    if market.version != "v1":
+    if market.version not in SUPPORTED_VERSIONS:
         raise ValueError(
-            f"Market {market.id} is on protocol {market.version!r}; polyclaw only "
-            "trades CTF (v1) markets for now"
+            f"Market {market.id} is on unknown protocol {market.version!r}; "
+            f"supported: {', '.join(SUPPORTED_VERSIONS)}"
         )
     if market.closed or not market.active or not market.accepting_orders:
         raise ValueError(f"Market {market.id} is not open for trading")
@@ -132,6 +133,7 @@ def plan_buy(
         market_id=market.id,
         question=market.question,
         condition_id=market.condition_id,
+        protocol=market.version,
         side=side,
         amount=amount,
         wanted_token_id=wanted,
@@ -194,6 +196,7 @@ def execute_buy(client, plan: BuyPlan, storage: PositionStorage) -> BuyResult:
         holder="deposit",
         unwanted_token_id=plan.unwanted_token_id,
         sold_shares=result.sold_shares,
+        protocol=plan.protocol,
     )
     storage.add(entry)
     result.position_id = entry.position_id

@@ -29,7 +29,7 @@ Polymarket trades from a **deposit wallet**: a personal smart wallet owned by th
 2. **Sell.** Sell the side you don't want right away with a fill-and-kill order. The order fills what it can now and cancels the rest. It won't sell below the floor shown in the preview.
 3. **Result.** You hold `N` shares of your side. The cost is `$N` minus what the sale brought back.
 
-Polymarket's minimums: at least 5 shares per order on most markets, and at least $1 per order. Small buys are refused unless you pass `--skip-sell`, which keeps both sides. Only standard markets are supported: the preview refuses Protocol V2 markets (Gamma `version: "v2"`).
+Polymarket's minimums: at least 5 shares per order on most markets, and at least $1 per order. Small buys are refused unless you pass `--skip-sell`, which keeps both sides. Both market types work: standard CTF markets and Polymarket Protocol V2 markets (Gamma `version: "v2"`, rolling out from November 23, 2026). The SDK routes each one to the right contracts.
 
 ## Setup (one-time)
 

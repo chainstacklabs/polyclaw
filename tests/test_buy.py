@@ -50,9 +50,13 @@ class TestPlan:
         with pytest.raises(ValueError, match="above the \\$50.00 limit"):
             plan_buy(_market(), "YES", 60, max_usd=50)
 
-    def test_refuses_protocol_v2_market(self):
-        with pytest.raises(ValueError, match="protocol 'v2'"):
-            plan_buy(_market(version="v2"), "YES", 10, max_usd=50)
+    def test_accepts_protocol_v2_market(self):
+        plan = plan_buy(_market(version="v2"), "YES", 10, max_usd=50)
+        assert plan.protocol == "v2"
+
+    def test_refuses_unknown_protocol(self):
+        with pytest.raises(ValueError, match="unknown protocol"):
+            plan_buy(_market(version=None), "YES", 10, max_usd=50)
 
     def test_refuses_closed_market(self):
         with pytest.raises(ValueError, match="not open"):
