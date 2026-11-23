@@ -55,6 +55,10 @@ class PositionEntry:
     holder: str = "eoa"
     unwanted_token_id: Optional[str] = None
     sold_shares: float = 0.0
+    # pUSD the unwanted side sold for at buy time (None before polyclaw 0.3.0).
+    sell_proceeds: Optional[float] = None
+    # pUSD paid out by `redeem` (None before polyclaw 0.3.0).
+    redeem_payout: Optional[float] = None
     # Market protocol: "v1" (CTF tokens) or "v2" (Protocol V2 PositionManager).
     protocol: str = "v1"
     # Sells and merges done by `polyclaw sell`, oldest first.
@@ -119,13 +123,17 @@ class PositionStorage:
                     return True
             return False
 
-    def mark_redeemed(self, position_id: str, redeem_tx: str) -> bool:
-        """Record a redemption tx hash and flip status to resolved (thread-safe)."""
+    def mark_redeemed(
+        self, position_id: str, redeem_tx: str, payout: Optional[float] = None
+    ) -> bool:
+        """Record a redemption tx hash (and payout) and flip status to resolved."""
         with _storage_lock:
             positions = self.load_all()
             for p in positions:
                 if p.get("position_id") == position_id:
                     p["redeem_tx"] = redeem_tx
+                    if payout is not None:
+                        p["redeem_payout"] = payout
                     p["status"] = "resolved"
                     self.save_all(positions)
                     return True

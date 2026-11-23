@@ -139,7 +139,7 @@ def _redeem(client, claim: Claim, storage: PositionStorage) -> bool:
         print(f"[{pid[:8]}] resolved with no payout - marked lost")
         return False
     tx = client.redeem_positions(condition_id=claim.position["condition_id"]).wait()
-    storage.mark_redeemed(pid, tx.transaction_hash)
+    storage.mark_redeemed(pid, tx.transaction_hash, payout=round(claim.payout, 6))
     print(f"[{pid[:8]}] redeemed ~{claim.payout:.2f} pUSD: {tx.transaction_hash}")
     return True
 

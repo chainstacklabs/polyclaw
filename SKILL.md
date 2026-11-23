@@ -73,7 +73,7 @@ uv run python scripts/polyclaw.py sell <position_id> --yes
 #   --json          JSON output
 
 # Positions and redemption
-uv run python scripts/polyclaw.py positions            # open positions with P&L (--all, --json)
+uv run python scripts/polyclaw.py positions            # P&L = value now + pUSD back - cost (--all, --json)
 uv run python scripts/polyclaw.py redeem list          # resolved positions and expected payout
 uv run python scripts/polyclaw.py redeem all           # claim them (gasless)
 

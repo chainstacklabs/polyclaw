@@ -25,7 +25,7 @@ Browse prediction markets, trade from your Polymarket deposit wallet, redeem win
   - Polymarket's minimum order sizes are checked before anything is spent.
 
 ### Positions
-- `polyclaw positions`: open positions with live P&L
+- `polyclaw positions`: open positions with P&L: what each cost, what the wallet holds now at current prices, and pUSD already back from sells and redeems (`--all` includes closed ones)
 - `polyclaw redeem list` / `redeem all`: claim pUSD from resolved markets (gasless)
 - Positions are tracked locally in `~/.openclaw/polyclaw/positions.json`
 
@@ -184,7 +184,7 @@ polyclaw/
 │   ├── wallet.py            # Deposit wallet setup, status, deposit
 │   ├── trade.py             # Buy: split + sell, with preview and limits
 │   ├── sell.py              # Sell: merge leftover pairs + sell, with preview
-│   ├── positions.py         # Position tracking + P&L
+│   ├── positions.py         # Position tracking + P&L (lib/pnl.py)
 │   ├── redeem.py            # Redeem resolved positions
 │   ├── recover.py           # Clean up tokens from PolyClaw 0.1.0
 │   └── hedge.py             # LLM hedge discovery
