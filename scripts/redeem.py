@@ -36,8 +36,6 @@ from lib.position_storage import PositionStorage  # noqa: E402
 from lib.trading import ConfigError, create_client  # noqa: E402
 from lib.wallet_manager import WalletManager  # noqa: E402
 
-# Balances below this are rounding dust.
-DUST_SHARES = 0.01
 # redeem_tx recorded when Polymarket's auto-redeem paid the position out.
 AUTO_REDEEM = "auto-redeem"
 
@@ -65,9 +63,10 @@ def expected_payout(
 def assess(position: dict, w3: Web3, deposit: str) -> Claim:
     """Resolution state and payout for one deposit-wallet position.
 
-    Tokens still in the wallet are ours to redeem. If the market resolved and
-    the wallet holds none, Polymarket's auto-redeem paid them out: the payout
-    is the recorded shares at the resolution (no transaction needed).
+    Tokens still in the wallet are ours to redeem. Recorded shares that are
+    no longer there were paid out by Polymarket's auto-redeem (it takes the
+    winning side and can leave the worthless one behind). The payout counts
+    both; a transaction is needed only for what's still held.
     """
     rates = payout_rates(w3, position)
     if rates is None:
@@ -85,11 +84,13 @@ def assess(position: dict, w3: Web3, deposit: str) -> Claim:
         return contract.functions.balanceOf(owner, int(token_id)).call() / 1e6
 
     held = bal(position.get("token_id")), bal(position.get("unwanted_token_id"))
-    if sum(held) > DUST_SHARES:
-        return Claim(position, resolved=True, payout=held[0] * rates[0] + held[1] * rates[1])
-    shares, other = recorded_holdings(position)
-    payout = shares * rates[0] + other * rates[1]
-    return Claim(position, resolved=True, payout=payout, auto=payout > 0)
+    recorded = recorded_holdings(position)
+    # Still in the wallet: ours to redeem. Recorded but gone (per side):
+    # auto-redeem paid it, e.g. the winning side, leaving the worthless one.
+    due = held[0] * rates[0] + held[1] * rates[1]
+    paid = sum(max(r - h, 0.0) * rate for r, h, rate in zip(recorded, held, rates))
+    payout = due + paid
+    return Claim(position, resolved=True, payout=payout, auto=due < 1e-6 and paid > 0)
 
 
 def _open_deposit_positions(storage: PositionStorage) -> tuple[list[dict], int]:

@@ -186,13 +186,17 @@ def test_redeemed_by_polyclaw_is_not_counted_twice():
     assert (pnl.value, pnl.realized) == (0.0, 10.0)
 
 
-def _ctf(denominator: int, numerators: list[int], balance: int = 0) -> MagicMock:
+def _ctf(denominator: int, numerators: list[int], balance=0) -> MagicMock:
+    """`balance`: one amount for every token, or {token_id: amount}."""
     ctf = MagicMock()
     ctf.functions.payoutDenominator.return_value.call.return_value = denominator
     ctf.functions.payoutNumerators.side_effect = lambda cid, i: MagicMock(
         call=MagicMock(return_value=numerators[i])
     )
-    ctf.functions.balanceOf.return_value.call.return_value = balance
+    held = balance if isinstance(balance, dict) else None
+    ctf.functions.balanceOf.side_effect = lambda owner, tid: MagicMock(
+        call=MagicMock(return_value=held.get(tid, 0) if held is not None else balance)
+    )
     return ctf
 
 
@@ -207,6 +211,17 @@ def test_assess_detects_auto_redeem():
     claim = assess(pos, _w3(_ctf(1, [0, 1])), "0x" + "11" * 20)
     assert claim.resolved and claim.auto
     assert claim.payout == 10.0
+
+
+def test_assess_winner_paid_out_loser_left_behind():
+    # Live 2026-11-23: kept 1 YES + 1 NO; NO won. Auto-redeem paid the NO and
+    # left the worthless YES in the wallet. That's $1 paid, not a loss.
+    pos = _pos(
+        entry_amount=1.0, sold_shares=0.0, sell_proceeds=0.0, condition_id="0x" + "ab" * 32
+    )
+    claim = assess(pos, _w3(_ctf(1, [0, 1], balance={111: 1_000_000})), "0x" + "11" * 20)
+    assert claim.resolved and claim.auto
+    assert claim.payout == 1.0
 
 
 def test_assess_held_tokens_are_not_auto():
