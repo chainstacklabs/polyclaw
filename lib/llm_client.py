@@ -106,8 +106,20 @@ class LLMClient:
                     json=payload,
                 )
                 response.raise_for_status()
-                data = response.json()
-                return data["choices"][0]["message"]["content"]
+                choice = response.json()["choices"][0]
+                content = choice["message"].get("content")
+                if content:
+                    return content
+                # Some models (reasoning ones in particular) can return no
+                # text, e.g. when they spend the output budget on reasoning.
+                finish = choice.get("finish_reason")
+                if attempt < LLM_MAX_RETRIES - 1:
+                    await asyncio.sleep(1)
+                    continue
+                raise RuntimeError(
+                    f"{self.model} returned no text (finish_reason={finish}); "
+                    "try another model with --model / POLYCLAW_HEDGE_MODEL"
+                )
 
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 429:
