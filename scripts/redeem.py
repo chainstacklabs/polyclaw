@@ -7,7 +7,9 @@
 
 Redeeming goes through the SDK (gasless, both YES and NO in one go). A
 position is marked redeemed only when it had something to pay out; positions
-that resolved against you are marked "lost". Positions opened by polyclaw
+that resolved against you are marked "lost". Polymarket also auto-redeems
+resolved positions in deposit wallets: those are recorded with their payout
+and need no transaction. Positions opened by polyclaw
 <= 0.1.0 live on the signing wallet: use `polyclaw recover` for those.
 """
 
@@ -28,12 +30,16 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 from web3 import Web3  # noqa: E402
 
 from lib.contracts import CONTRACTS, CTF_ABI, POSITION_MANAGER_ABI  # noqa: E402
+from lib.payout import SIDE_INDEX, payout_rates  # noqa: E402
+from lib.pnl import recorded_holdings  # noqa: E402
 from lib.position_storage import PositionStorage  # noqa: E402
 from lib.trading import ConfigError, create_client  # noqa: E402
 from lib.wallet_manager import WalletManager  # noqa: E402
 
-# Polymarket binary markets: outcome index 0 = YES, 1 = NO.
-SIDE_INDEX = {"YES": 0, "NO": 1}
+# Balances below this are rounding dust.
+DUST_SHARES = 0.01
+# redeem_tx recorded when Polymarket's auto-redeem paid the position out.
+AUTO_REDEEM = "auto-redeem"
 
 
 @dataclass
@@ -42,6 +48,8 @@ class Claim:
     resolved: bool
     payout: float  # expected pUSD
     note: Optional[str] = None
+    # Polymarket's auto-redeem already paid it into the deposit wallet.
+    auto: bool = False
 
 
 def expected_payout(
@@ -55,60 +63,33 @@ def expected_payout(
 
 
 def assess(position: dict, w3: Web3, deposit: str) -> Claim:
-    """Resolution state and expected payout for one deposit-wallet position."""
-    if position.get("protocol") == "v2":
-        return assess_v2(position, w3, deposit)
-    ctf = w3.eth.contract(address=Web3.to_checksum_address(CONTRACTS["CTF"]), abi=CTF_ABI)
-    cid = bytes.fromhex(position["condition_id"].removeprefix("0x"))
-    denom = ctf.functions.payoutDenominator(cid).call()
-    if not denom:
+    """Resolution state and payout for one deposit-wallet position.
+
+    Tokens still in the wallet are ours to redeem. If the market resolved and
+    the wallet holds none, Polymarket's auto-redeem paid them out: the payout
+    is the recorded shares at the resolution (no transaction needed).
+    """
+    rates = payout_rates(w3, position)
+    if rates is None:
         return Claim(position, resolved=False, payout=0.0)
-    nums = [ctf.functions.payoutNumerators(cid, i).call() for i in range(2)]
+    ledger = "POSITION_MANAGER" if position.get("protocol") == "v2" else "CTF"
+    contract = w3.eth.contract(
+        address=Web3.to_checksum_address(CONTRACTS[ledger]),
+        abi=POSITION_MANAGER_ABI if ledger == "POSITION_MANAGER" else CTF_ABI,
+    )
     owner = Web3.to_checksum_address(deposit)
 
     def bal(token_id: Optional[str]) -> float:
         if not token_id:
             return 0.0
-        return ctf.functions.balanceOf(owner, int(token_id)).call() / 1e6
+        return contract.functions.balanceOf(owner, int(token_id)).call() / 1e6
 
-    payout = expected_payout(
-        bal(position.get("token_id")),
-        bal(position.get("unwanted_token_id")),
-        position["position"],
-        nums,
-        denom,
-    )
-    return Claim(position, resolved=True, payout=payout)
-
-
-def assess_v2(position: dict, w3: Web3, deposit: str) -> Claim:
-    """Protocol V2: balances and payouts come from the PositionManager.
-
-    getPayout reverts while the market is unresolved; 0 is a losing payout.
-    """
-    pm = w3.eth.contract(
-        address=Web3.to_checksum_address(CONTRACTS["POSITION_MANAGER"]),
-        abi=POSITION_MANAGER_ABI,
-    )
-    owner = Web3.to_checksum_address(deposit)
-    held = []
-    for key in ("token_id", "unwanted_token_id"):
-        token_id = position.get(key)
-        if token_id:
-            balance = pm.functions.balanceOf(owner, int(token_id)).call()
-            if balance:
-                held.append((int(token_id), balance))
-    if not held:
-        # Nothing held: if the market resolved we can't tell from here, so
-        # probe the wanted side's payout (revert = unresolved).
-        held_probe = [(int(position["token_id"]), 0)]
-    else:
-        held_probe = held
-    try:
-        payout = sum(pm.functions.getPayout(pid, amt).call() for pid, amt in held_probe)
-    except Exception:
-        return Claim(position, resolved=False, payout=0.0)
-    return Claim(position, resolved=True, payout=payout / 1e6)
+    held = bal(position.get("token_id")), bal(position.get("unwanted_token_id"))
+    if sum(held) > DUST_SHARES:
+        return Claim(position, resolved=True, payout=held[0] * rates[0] + held[1] * rates[1])
+    shares, other = recorded_holdings(position)
+    payout = shares * rates[0] + other * rates[1]
+    return Claim(position, resolved=True, payout=payout, auto=payout > 0)
 
 
 def _open_deposit_positions(storage: PositionStorage) -> tuple[list[dict], int]:
@@ -134,6 +115,10 @@ def _claims(positions: list[dict], manager: WalletManager) -> list[Claim]:
 
 def _redeem(client, claim: Claim, storage: PositionStorage) -> bool:
     pid = claim.position["position_id"]
+    if claim.auto:
+        storage.mark_redeemed(pid, AUTO_REDEEM, payout=round(claim.payout, 6))
+        print(f"[{pid[:8]}] Polymarket already paid ~{claim.payout:.2f} pUSD (auto-redeem)")
+        return True
     if claim.payout <= 0:
         storage.update_status(pid, "lost")
         print(f"[{pid[:8]}] resolved with no payout - marked lost")
@@ -175,6 +160,7 @@ async def cmd(args) -> int:
                 "market": c.position["question"][:60],
                 "side": c.position["position"],
                 "expected_payout": round(c.payout, 4),
+                "auto_redeemed": c.auto,
             }
             for c in claims
         ]
@@ -184,7 +170,11 @@ async def cmd(args) -> int:
             print("No resolved deposit-wallet positions.")
         else:
             for r in rows:
-                print(f"{r['position_id'][:8]}  {r['side']:<3}  ~{r['expected_payout']:.2f} pUSD  {r['market']}")
+                done = "  (already paid by auto-redeem)" if r["auto_redeemed"] else ""
+                print(
+                    f"{r['position_id'][:8]}  {r['side']:<3}  ~{r['expected_payout']:.2f} pUSD  "
+                    f"{r['market']}{done}"
+                )
         if legacy and not args.json:
             print(f"\n{legacy} older position(s) live on the signing wallet: run `polyclaw recover scan`.")
         return 0

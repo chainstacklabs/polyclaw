@@ -2,7 +2,9 @@
 
   cost      = pUSD split at buy time - what the other side sold for
   realized  = pUSD back from `sell` (sales + merges) and `redeem`
-  value     = shares held now x current price, both sides
+  value     = shares held now x current price, both sides; once the market
+              has resolved on-chain, the recorded shares x their payout
+              (Polymarket's auto-redeem may already have paid them out)
   P&L       = value + realized - cost
 
 Holdings come from the chain when a balance reader is available and from
@@ -30,7 +32,7 @@ class PositionPnL:
     holdings_source: str  # "chain" or "recorded"
 
 
-def _recorded_holdings(position: dict) -> tuple[float, float]:
+def recorded_holdings(position: dict) -> tuple[float, float]:
     """(your side, other side) implied by the recorded buy and exits."""
     exits = position.get("exits") or []
     amount = float(position.get("entry_amount") or 0)
@@ -50,11 +52,14 @@ def position_pnl(
     yes_price: float,
     no_price: float,
     balances: Optional[tuple[float, float]] = None,
+    payout: Optional[tuple[float, float]] = None,
 ) -> PositionPnL:
     """P&L for one stored position.
 
     `balances` = (your side, other side) read from the chain, or None to use
-    the recorded trades. Prices are Gamma's outcome prices (1/0 once resolved).
+    the recorded trades. Prices are Gamma's outcome prices. `payout` =
+    (your side, other side) pUSD per share once the market resolved on-chain
+    (see lib/payout.py); it replaces both.
     """
     yes_side = position.get("position") == "YES"
     price, other_price = (yes_price, no_price) if yes_side else (no_price, yes_price)
@@ -75,10 +80,13 @@ def position_pnl(
     # Redeemed before polyclaw 0.3.0 recorded payouts: the chain shows 0, so
     # value the recorded shares at the resolved prices instead.
     legacy_redeem = position.get("redeem_tx") and position.get("redeem_payout") is None
-    if balances is not None and not legacy_redeem:
+    if payout is not None and not legacy_redeem:
+        (shares, other), source = recorded_holdings(position), "resolved"
+        price, other_price = payout
+    elif balances is not None and not legacy_redeem:
         shares, other, source = balances[0], balances[1], "chain"
     else:
-        (shares, other), source = _recorded_holdings(position), "recorded"
+        (shares, other), source = recorded_holdings(position), "recorded"
 
     value = shares * price + other * other_price
     pnl = value + realized - cost
