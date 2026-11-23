@@ -22,7 +22,12 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 from web3 import Web3  # noqa: E402
 
 from lib.contracts import CONTRACTS, ERC20_ABI, POLYGON_CHAIN_ID  # noqa: E402
-from lib.trading import ConfigError, create_client, private_key  # noqa: E402
+from lib.trading import (  # noqa: E402
+    ConfigError,
+    create_client,
+    private_key,
+    set_trading_approvals,
+)
 from lib.wallet_manager import WalletManager  # noqa: E402
 
 
@@ -79,12 +84,12 @@ def cmd_setup(args) -> int:
 
     print(f"Deposit wallet: {client.wallet}")
     try:
-        client.setup_trading_approvals()
-        print("Trading approvals set (or already in place).")
+        sent = set_trading_approvals(client)
     except Exception as e:
-        # The relayer sometimes rejects the approval batch; the SDK also
-        # re-checks allowances on split/merge/orders.
-        print(f"Warning: approval setup failed: {e}", file=sys.stderr)
+        print(f"Error: trading approvals failed: {e}", file=sys.stderr)
+        print("Run `polyclaw wallet setup` again; granted approvals are skipped.", file=sys.stderr)
+        return 1
+    print(f"Trading approvals: {f'set {sent}' if sent else 'already in place'}.")
     print("Fund it by sending pUSD to the deposit wallet address above.")
     return 0
 

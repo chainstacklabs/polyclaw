@@ -37,6 +37,9 @@ MIN_ORDER_USD = 1.0
 # Fallback share minimum when Gamma omits `orderMinSize` (5 on every live
 # market checked 2026-11-22).
 DEFAULT_MIN_ORDER_SHARES = 5.0
+# Approvals per relayed transaction. The relayer rejected all 17 in one batch
+# (Cloudflare 400) and accepted batches of 4 (2026-11-23, SDK 0.20.0).
+APPROVAL_BATCH_SIZE = 4
 
 
 class ConfigError(Exception):
@@ -99,6 +102,36 @@ def create_client():
     )
     cache_deposit_wallet(signer_address(), str(client.wallet))
     return client
+
+
+def set_trading_approvals(client) -> int:
+    """Grant the deposit wallet's missing trading approvals in small batches.
+
+    ``setup_trading_approvals()`` relays every missing approval (17 on a new
+    wallet) as one batch, which the relayer rejects (Cloudflare 400). Raises
+    on the first failed batch; a re-run skips approvals already granted.
+    Returns the number of approvals sent.
+    """
+    from polymarket.calls import erc20_approval_call, erc1155_set_approval_for_all_call
+
+    missing = client.get_trading_approvals_state().missing
+    calls = [
+        erc20_approval_call(token_address=a.token_address, spender=a.spender, amount=a.amount)
+        for a in missing.erc20
+    ] + [
+        erc1155_set_approval_for_all_call(
+            token_address=a.token_address, operator=a.operator, approved=True
+        )
+        for a in missing.erc1155
+    ]
+    batches = [
+        calls[i : i + APPROVAL_BATCH_SIZE] for i in range(0, len(calls), APPROVAL_BATCH_SIZE)
+    ]
+    for n, batch in enumerate(batches, 1):
+        client.execute_transaction(
+            calls=batch, metadata=f"Trading setup approvals {n}/{len(batches)}"
+        ).wait()
+    return len(calls)
 
 
 def cache_deposit_wallet(signer: str, deposit_wallet: str) -> None:
