@@ -2,7 +2,7 @@
 
 import json
 import threading
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Optional
 
@@ -57,6 +57,8 @@ class PositionEntry:
     sold_shares: float = 0.0
     # Market protocol: "v1" (CTF tokens) or "v2" (Protocol V2 PositionManager).
     protocol: str = "v1"
+    # Sells and merges done by `polyclaw sell`, oldest first.
+    exits: list = field(default_factory=list)
 
 
 class PositionStorage:
@@ -136,6 +138,19 @@ class PositionStorage:
             for p in positions:
                 if p.get("position_id") == position_id:
                     p["condition_id"] = condition_id
+                    self.save_all(positions)
+                    return True
+            return False
+
+    def record_exit(self, position_id: str, exit_record: dict, close: bool) -> bool:
+        """Append a sell/merge record; close the position if it's fully exited."""
+        with _storage_lock:
+            positions = self.load_all()
+            for p in positions:
+                if p.get("position_id") == position_id:
+                    p.setdefault("exits", []).append(exit_record)
+                    if close:
+                        p["status"] = "closed"
                     self.save_all(positions)
                     return True
             return False

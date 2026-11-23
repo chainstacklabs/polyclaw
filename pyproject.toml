@@ -1,6 +1,6 @@
 [project]
 name = "polyclaw"
-version = "0.2.0"
+version = "0.3.0"
 description = "Trading-enabled Polymarket skill for OpenClaw"
 readme = "README.md"
 requires-python = ">=3.11"
