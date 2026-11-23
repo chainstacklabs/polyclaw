@@ -93,38 +93,31 @@ class GammaClient:
             return [self._parse_market(m) for m in resp.json()]
 
     async def search_markets(self, query: str, limit: int = 20) -> list[Market]:
-        """Search markets by keyword.
+        """Search open markets by keyword (server-side, Gamma /public-search).
 
-        Note: Gamma API doesn't support server-side text search,
-        so we fetch a larger batch and filter client-side.
+        Returns markets from matching active events, highest 24h volume first.
         """
-        # Fetch more markets to search through
-        fetch_limit = max(500, limit * 10)
-
         async with httpx.AsyncClient(timeout=self.timeout) as http:
             resp = await http.get(
-                f"{GAMMA_API_BASE}/markets",
+                f"{GAMMA_API_BASE}/public-search",
                 params={
-                    "closed": "false",
-                    "limit": fetch_limit,
-                    "order": "volume24hr",
-                    "ascending": "false",
+                    "q": query,
+                    "events_status": "active",
+                    "keep_closed_markets": 0,
+                    "limit_per_type": max(limit, 20),
                 },
             )
             resp.raise_for_status()
+            events = resp.json().get("events") or []
 
-            # Client-side filter by query in question or slug
-            query_lower = query.lower()
-            matches = []
-            for m in resp.json():
-                question = m.get("question", "").lower()
-                slug = m.get("slug", "").lower()
-                if query_lower in question or query_lower in slug:
-                    matches.append(self._parse_market(m))
-                    if len(matches) >= limit:
-                        break
-
-            return matches
+        markets = [
+            m
+            for event in events
+            for m in event.get("markets") or []
+            if m.get("active", True) and not m.get("closed", False)
+        ]
+        markets.sort(key=lambda m: float(m.get("volume24hr") or 0), reverse=True)
+        return [self._parse_market(m) for m in markets[:limit]]
 
     async def get_market(self, market_id: str) -> Market:
         """Get market by ID."""
@@ -160,19 +153,6 @@ class GammaClient:
             )
             resp.raise_for_status()
             return [self._parse_event(e) for e in resp.json()]
-
-    async def get_prices(self, token_ids: list[str]) -> dict[str, float]:
-        """Get current prices for token IDs."""
-        if not token_ids:
-            return {}
-
-        async with httpx.AsyncClient(timeout=self.timeout) as http:
-            resp = await http.get(
-                "https://clob.polymarket.com/prices",
-                params={"token_ids": ",".join(token_ids)},
-            )
-            resp.raise_for_status()
-            return resp.json()
 
     def _parse_market(self, data: dict) -> Market:
         """Parse market JSON into Market dataclass."""

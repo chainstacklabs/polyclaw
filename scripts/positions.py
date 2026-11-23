@@ -162,7 +162,7 @@ async def cmd_show(args):
         return 1
 
     if len(matches) > 1:
-        print(f"Multiple matches, be more specific:")
+        print("Multiple matches, be more specific:")
         for p in matches:
             print(f"  {p['position_id'][:12]} - {p['question'][:40]}")
         return 1
@@ -216,7 +216,7 @@ def cmd_close(args):
         return 1
 
     if len(matches) > 1:
-        print(f"Multiple matches, be more specific")
+        print("Multiple matches, be more specific")
         return 1
 
     pos = matches[0]
@@ -238,7 +238,7 @@ def cmd_delete(args):
         return 1
 
     if len(matches) > 1:
-        print(f"Multiple matches, be more specific")
+        print("Multiple matches, be more specific")
         return 1
 
     pos = matches[0]
