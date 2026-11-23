@@ -87,7 +87,8 @@ def assess(position: dict, w3: Web3, deposit: str) -> Claim:
     recorded = recorded_holdings(position)
     # Still in the wallet: ours to redeem. Recorded but gone (per side):
     # auto-redeem paid it, e.g. the winning side, leaving the worthless one.
-    due = held[0] * rates[0] + held[1] * rates[1]
+    # Capped at the recorded shares: other positions may share the balance.
+    due = sum(min(h, r) * rate for r, h, rate in zip(recorded, held, rates))
     paid = sum(max(r - h, 0.0) * rate for r, h, rate in zip(recorded, held, rates))
     payout = due + paid
     return Claim(position, resolved=True, payout=payout, auto=due < 1e-6 and paid > 0)
@@ -114,8 +115,22 @@ def _claims(positions: list[dict], manager: WalletManager) -> list[Claim]:
     return out
 
 
-def _redeem(client, claim: Claim, storage: PositionStorage) -> bool:
+def _redeem(
+    client, claim: Claim, storage: PositionStorage, done: Optional[dict[str, str]] = None
+) -> bool:
+    """Record one claim; `done` = {condition id: tx hash} redeemed this run.
+
+    One redeem transaction pays out the wallet's whole balance of a market,
+    so a second position on it is recorded without another transaction.
+    """
     pid = claim.position["position_id"]
+    done = done if done is not None else {}
+    cid = claim.position["condition_id"]
+    if claim.payout > 0 and cid in done:
+        tx_hash = AUTO_REDEEM if claim.auto else done[cid]
+        storage.mark_redeemed(pid, tx_hash, payout=round(claim.payout, 6))
+        print(f"[{pid[:8]}] paid ~{claim.payout:.2f} pUSD by this run's redeem of the market")
+        return True
     if claim.auto:
         storage.mark_redeemed(pid, AUTO_REDEEM, payout=round(claim.payout, 6))
         print(f"[{pid[:8]}] Polymarket already paid ~{claim.payout:.2f} pUSD (auto-redeem)")
@@ -124,7 +139,8 @@ def _redeem(client, claim: Claim, storage: PositionStorage) -> bool:
         storage.update_status(pid, "lost")
         print(f"[{pid[:8]}] resolved with no payout - marked lost")
         return False
-    tx = client.redeem_positions(condition_id=claim.position["condition_id"]).wait()
+    tx = client.redeem_positions(condition_id=cid).wait()
+    done[cid] = tx.transaction_hash
     storage.mark_redeemed(pid, tx.transaction_hash, payout=round(claim.payout, 6))
     print(f"[{pid[:8]}] redeemed ~{claim.payout:.2f} pUSD: {tx.transaction_hash}")
     return True
@@ -190,9 +206,10 @@ async def cmd(args) -> int:
         return 1
 
     failed = 0
+    done: dict[str, str] = {}
     for c in claims:
         try:
-            _redeem(client, c, storage)
+            _redeem(client, c, storage, done)
         except Exception as e:
             failed += 1
             print(f"[{c.position['position_id'][:8]}] redeem failed: {e}", file=sys.stderr)

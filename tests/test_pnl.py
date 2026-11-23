@@ -256,3 +256,39 @@ def test_auto_redeem_is_recorded_without_a_transaction(tmp_path):
     assert saved["redeem_payout"] == 10.0
     assert saved["redeem_tx"] == "auto-redeem"
     assert saved["status"] == "resolved"
+
+
+def test_two_positions_on_one_market_each_get_their_own_shares():
+    # A and B each recorded 10 YES; the wallet holds 20; YES won.
+    pos = _pos(condition_id="0x" + "ab" * 32)  # 10 YES recorded, NO sold
+    claim = assess(pos, _w3(_ctf(1, [1, 0], balance={111: 20_000_000})), "0x" + "11" * 20)
+    assert claim.payout == 10.0  # not the wallet's 20
+
+
+def test_one_redeem_tx_per_market_per_run(tmp_path):
+    storage = PositionStorage(tmp_path / "p.json")
+    for pid in ("aaaa0000", "bbbb0000"):
+        storage.add(
+            PositionEntry(
+                position_id=pid,
+                market_id="1",
+                question="q",
+                position="YES",
+                token_id="111",
+                entry_time="t",
+                entry_amount=10,
+                entry_price=0.37,
+                split_tx="0xs",
+                condition_id="0xcond",
+                holder="deposit",
+            )
+        )
+    client = create_autospec(SecureClient, instance=True)
+    client.redeem_positions.return_value.wait.return_value = MagicMock(transaction_hash="0xr")
+    done: dict[str, str] = {}
+    for p in storage.load_all():
+        _redeem(client, Claim(p, resolved=True, payout=10.0), storage, done)
+    client.redeem_positions.assert_called_once()
+    saved = storage.load_all()
+    assert [p["redeem_payout"] for p in saved] == [10.0, 10.0]
+    assert [p["redeem_tx"] for p in saved] == ["0xr", "0xr"]

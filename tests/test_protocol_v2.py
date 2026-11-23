@@ -77,6 +77,8 @@ POSITION = {
     "position": "YES",
     "token_id": "1001",
     "unwanted_token_id": "1002",
+    "entry_amount": 10.0,  # split 10, sold 6 NO: recorded 10 YES + 4 NO
+    "sold_shares": 6.0,
 }
 DEPOSIT = "0x21c79811788D075ED5C701A0a4875D73c5c92c4f"
 
@@ -95,7 +97,8 @@ def test_v2_winning_payout_counts_held_shares():
 
 
 def test_v2_lost_and_nothing_held_is_resolved_zero():
+    # All NO sold at buy time; YES lost; nothing left in the wallet.
     w3 = _w3({}, payouts={1001: 0, 1002: 10**6})
-    claim = assess(POSITION, w3, DEPOSIT)
+    claim = assess({**POSITION, "sold_shares": 10.0}, w3, DEPOSIT)
     assert claim.resolved is True
     assert claim.payout == 0.0
