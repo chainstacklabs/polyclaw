@@ -86,7 +86,9 @@ class TestPlan:
 def _client(sold: float = 10.0, ok: bool = True) -> MagicMock:
     client = create_autospec(SecureClient, instance=True)
     client.split_position.return_value.wait.return_value.transaction_hash = "0xsplit"
-    resp = MagicMock(ok=ok, order_id="0xorder", making_amount=sold, message="no fill")
+    resp = MagicMock(
+        ok=ok, order_id="0xorder", making_amount=sold, taking_amount=sold * 0.65, message="no fill"
+    )
     client.place_market_order.return_value = resp
     return client
 
@@ -113,6 +115,7 @@ class TestExecute:
         assert saved["holder"] == "deposit"
         assert saved["token_id"] == "111"
         assert saved["unwanted_token_id"] == "222"
+        assert saved["sell_proceeds"] == 6.5
 
     def test_partial_fill_is_reported(self, tmp_path):
         client = _client(sold=4.0)

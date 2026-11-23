@@ -15,7 +15,7 @@ from typing import Optional
 
 from web3 import Web3
 
-from lib.contracts import CONTRACTS, CTF_ABI, ERC20_ABI
+from lib.contracts import CONTRACTS, CTF_ABI, ERC20_ABI, POSITION_MANAGER_ABI
 from lib.trading import cached_deposit_wallet, private_key, signer_address
 
 
@@ -78,11 +78,16 @@ class WalletManager:
             ),
         )
 
-    def token_balance(self, owner: str, token_id: str) -> float:
-        """ERC-1155 outcome-token balance (shares) on the CTF."""
+    def token_balance(self, owner: str, token_id: str, protocol: str = "v1") -> float:
+        """Outcome-token balance (shares): CTF for v1 markets, PositionManager for v2."""
         w3 = self.web3()
-        ctf = w3.eth.contract(address=Web3.to_checksum_address(CONTRACTS["CTF"]), abi=CTF_ABI)
-        return ctf.functions.balanceOf(Web3.to_checksum_address(owner), int(token_id)).call() / 1e6
+        if protocol == "v2":
+            address, abi = CONTRACTS["POSITION_MANAGER"], POSITION_MANAGER_ABI
+        else:
+            address, abi = CONTRACTS["CTF"], CTF_ABI
+        ledger = w3.eth.contract(address=Web3.to_checksum_address(address), abi=abi)
+        raw = ledger.functions.balanceOf(Web3.to_checksum_address(owner), int(token_id)).call()
+        return raw / 1e6
 
     def check_approvals(self) -> Optional[bool]:
         """True if the deposit wallet has every approval the SDK trades with.

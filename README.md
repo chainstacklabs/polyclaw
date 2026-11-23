@@ -18,13 +18,14 @@ Browse prediction markets, trade from your Polymarket deposit wallet, redeem win
 ### Trading
 - `polyclaw buy <market_id> YES|NO <amount>`: preview a buy. Add `--yes` to execute it.
 - Split pUSD into YES+NO shares, then sell the side you don't want.
+- `polyclaw sell <position_id>`: preview selling a position. Add `--yes` to execute it, or `--shares N` to sell part.
 - Guardrails:
   - The default run is a preview.
   - A spend limit (`POLYCLAW_MAX_TRADE_USD`, default $50).
   - Polymarket's minimum order sizes are checked before anything is spent.
 
 ### Positions
-- `polyclaw positions`: open positions with live P&L
+- `polyclaw positions`: open positions with P&L: what each cost, what the wallet holds now at current prices, and pUSD already back from sells and redeems (`--all` includes closed ones)
 - `polyclaw redeem list` / `redeem all`: claim pUSD from resolved markets (gasless)
 - Positions are tracked locally in `~/.openclaw/polyclaw/positions.json`
 
@@ -60,6 +61,8 @@ Net:    10 YES for about $6.50–6.90
 ```
 
 If the sell doesn't fill, `buy` exits with code `3`. You then hold both sides, which is hedged, not lost.
+
+**Selling a position.** `polyclaw sell <position_id>` reads what the deposit wallet really holds. Leftover YES + NO pairs are merged back into pUSD first, at exactly $1 per pair. The rest is sold with a fill-and-kill order, at no less than 5% under the price the order book fills at now. `--slippage` changes that margin, and `--shares N` sells only part.
 
 ## Quick start
 
@@ -127,6 +130,8 @@ uv run python scripts/polyclaw.py markets trending
 uv run python scripts/polyclaw.py buy <market_id> YES 20          # preview
 uv run python scripts/polyclaw.py buy <market_id> YES 20 --yes    # execute
 uv run python scripts/polyclaw.py positions
+uv run python scripts/polyclaw.py sell <position_id>              # preview
+uv run python scripts/polyclaw.py sell <position_id> --yes        # execute
 ```
 
 ## Example prompts
@@ -139,6 +144,7 @@ Natural-language prompts you can use with OpenClaw:
 - **"Buy $20 YES on market `<market_id>`"**: the agent shows a preview and asks you to confirm before it spends anything.
 - **"Find me some hedging opportunities on Polymarket"**: LLM analysis of market pairs. This takes a few minutes.
 - **"Show my PolyClaw positions"**: entry price, current price, and P&L.
+- **"Sell my Xi Jinping position"**: the agent shows what it would sell and for about how much, then asks you to confirm.
 - **"Claim my resolved Polymarket positions"**: redeems resolved positions into pUSD.
 
 ## Upgrading from PolyClaw 0.1.0
@@ -177,7 +183,8 @@ polyclaw/
 │   ├── markets.py           # Market browsing (Gamma API)
 │   ├── wallet.py            # Deposit wallet setup, status, deposit
 │   ├── trade.py             # Buy: split + sell, with preview and limits
-│   ├── positions.py         # Position tracking + P&L
+│   ├── sell.py              # Sell: merge leftover pairs + sell, with preview
+│   ├── positions.py         # Position tracking + P&L (lib/pnl.py)
 │   ├── redeem.py            # Redeem resolved positions
 │   ├── recover.py           # Clean up tokens from PolyClaw 0.1.0
 │   └── hedge.py             # LLM hedge discovery

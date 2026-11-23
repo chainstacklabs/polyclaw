@@ -10,6 +10,8 @@ Usage:
     polyclaw wallet deposit 20 --yes
     polyclaw buy <market_id> YES 20          (preview)
     polyclaw buy <market_id> YES 20 --yes    (execute)
+    polyclaw sell <position_id>              (preview)
+    polyclaw sell <position_id> --yes        (execute)
     polyclaw positions
     polyclaw redeem list
     polyclaw redeem <position_id>
@@ -72,6 +74,9 @@ def main():
         # Shortcut: polyclaw buy <id> YES 50 -> trade buy <id> YES 50
         return run_script("trade", ["buy"] + args)
 
+    elif command == "sell":
+        return run_script("sell", args)
+
     elif command == "positions":
         # positions.py takes --json before the subcommand and defaults to list
         json_flag = [a for a in args if a == "--json"]
@@ -110,6 +115,8 @@ def main():
         print("")
         print("  buy <market_id> YES <amt>  Preview a YES buy for $amt pUSD")
         print("  buy <market_id> NO <amt> --yes  Execute a NO buy")
+        print("  sell <position_id>         Preview selling a position (full exit)")
+        print("  sell <position_id> --yes   Execute; --shares N sells only part")
         print("")
         print("  positions                  List open positions with P&L")
         print("  positions --all            List all positions")
@@ -145,7 +152,7 @@ def main():
         return 0
 
     elif command == "version" or command == "--version" or command == "-v":
-        print("PolyClaw v0.2.0")
+        print("PolyClaw v0.3.0")
         return 0
 
     else:

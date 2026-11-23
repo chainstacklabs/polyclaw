@@ -67,6 +67,7 @@ class BuyResult:
     split_tx: Optional[str] = None
     sell_order_id: Optional[str] = None
     sold_shares: float = 0.0
+    sell_proceeds: float = 0.0  # pUSD the unwanted side sold for
     sell_error: Optional[str] = None
     position_id: Optional[str] = None
 
@@ -171,6 +172,7 @@ def execute_buy(client, plan: BuyPlan, storage: PositionStorage) -> BuyResult:
             if getattr(resp, "ok", False):
                 result.sell_order_id = resp.order_id
                 result.sold_shares = float(resp.making_amount)
+                result.sell_proceeds = float(resp.taking_amount)
                 if result.sold_shares < plan.amount:
                     result.sell_error = (
                         f"Partial fill: sold {result.sold_shares:g} of {plan.amount:g}"
@@ -196,6 +198,7 @@ def execute_buy(client, plan: BuyPlan, storage: PositionStorage) -> BuyResult:
         holder="deposit",
         unwanted_token_id=plan.unwanted_token_id,
         sold_shares=result.sold_shares,
+        sell_proceeds=result.sell_proceeds,
         protocol=plan.protocol,
     )
     storage.add(entry)
