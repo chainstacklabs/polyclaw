@@ -1342,7 +1342,7 @@ dev = [
 requires-dist = [
     { name = "eth-account", specifier = ">=0.13.0" },
     { name = "httpx", specifier = ">=0.28.0" },
-    { name = "polymarket-client", specifier = "==0.18.0" },
+    { name = "polymarket-client", specifier = "==0.20.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "web3", specifier = ">=7.0.0,<8" },
 ]
@@ -1352,7 +1352,7 @@ dev = [{ name = "pytest", specifier = ">=9.0.0" }]
 
 [[package]]
 name = "polymarket-client"
-version = "0.18.0"
+version = "0.20.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "eth-abi" },
@@ -1364,9 +1364,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/68/ea/d5aab83fd8fafdfc8e657f7a2529562a7011ea4aaabb95fab6acc55171f6/polymarket_client-0.18.0.tar.gz", hash = "sha256:4d0fb1d04b65cc877e6001c5635e020ca44141319d0b835acb336fe24defa992", size = 465080, upload-time = "2026-11-09T16:45:34.684Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/87/6f/36edec6238d3c182956f91fcf9f51423309bd159ddef9c754b5964ef5370/polymarket_client-0.20.0.tar.gz", hash = "sha256:1bc25799dc1193d9db758d9a7c2a4bc72c8854ea42e3a64bb46b93ca9dff93b9", size = 466409, upload-time = "2026-11-16T15:18:03.092Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/68/1b/83b7c63963505e83a2d0753a5d31de1ed38623f4cd2939f4759227101640/polymarket_client-0.18.0-py3-none-any.whl", hash = "sha256:41f939be513ea81b272bce29d5d1f2dc5e290ba20c5086814d58153eaf7bb253", size = 427450, upload-time = "2026-11-09T16:45:32.992Z" },
+    { url = "https://files.pythonhosted.org/packages/25/91/e0d5814619fbab8ed9614f3791624834580fb619bb39f76792824baa3970/polymarket_client-0.20.0-py3-none-any.whl", hash = "sha256:677e074364bc051e330b1430e22b634ddf308e95c7ba6ca85645cd82741625c6", size = 428375, upload-time = "2026-11-16T15:18:01.072Z" },
 ]
 
 [[package]]
