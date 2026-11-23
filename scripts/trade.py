@@ -35,6 +35,7 @@ from lib.trading import (  # noqa: E402
     compute_sell_floor,
     create_client,
     max_trade_usd,
+    net_sale_proceeds,
     sdk_estimator,
 )
 
@@ -60,6 +61,7 @@ class BuyPlan:
     est_recovered: float  # pUSD back if the unwanted side sells at the floor
     est_cost: float  # amount - est_recovered
     est_entry_price: float  # est_cost per wanted share
+    fee_schedule: Optional[dict] = None  # Gamma feeSchedule; None = no taker fee
 
 
 @dataclass
@@ -158,6 +160,7 @@ def plan_buy(
         est_recovered=recovered,
         est_cost=cost,
         est_entry_price=round(cost / amount, 4),
+        fee_schedule=market.fee_schedule,
     )
 
 
@@ -184,7 +187,9 @@ def execute_buy(client, plan: BuyPlan, storage: PositionStorage) -> BuyResult:
             if getattr(resp, "ok", False):
                 result.sell_order_id = resp.order_id
                 result.sold_shares = float(resp.making_amount)
-                result.sell_proceeds = float(resp.taking_amount)
+                result.sell_proceeds = net_sale_proceeds(
+                    result.sold_shares, float(resp.taking_amount), plan.fee_schedule
+                )
                 if result.sold_shares < plan.amount:
                     result.sell_error = (
                         f"Partial fill: sold {result.sold_shares:g} of {plan.amount:g}"

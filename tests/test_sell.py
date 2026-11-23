@@ -175,6 +175,12 @@ def _storage(tmp_path) -> PositionStorage:
 
 
 class TestExecute:
+    def test_proceeds_are_net_of_taker_fee(self, tmp_path):
+        market = _market(fee_schedule={"exponent": 1, "rate": 0.05})
+        plan = plan_sell(_position(), market, 7, 0, _estimate(0.5))
+        result = execute_sell(_client(sold=7.0, proceeds=3.5), plan, _storage(tmp_path))
+        assert result.proceeds == pytest.approx(3.5 - 7 * 0.05 * 0.5 * 0.5)
+
     def test_merges_then_sells_and_closes(self, tmp_path):
         storage = _storage(tmp_path)
         client = _client(sold=7.0, proceeds=3.5)

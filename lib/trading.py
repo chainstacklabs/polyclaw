@@ -177,6 +177,27 @@ def sdk_estimator() -> PriceEstimator:
     return estimate
 
 
+def taker_fee(shares: float, price: float, schedule: Optional[dict]) -> float:
+    """Taker fee in pUSD on a fill of `shares` at `price` (Gamma `feeSchedule`).
+
+    fee = shares * rate * price^exponent * (1 - price)^exponent; matched what
+    reached the wallet on live sells (2026-11-23) to 1e-5.
+    """
+    if not schedule or shares <= 0 or not 0 < price < 1:
+        return 0.0
+    rate = float(schedule.get("rate", 0.0))
+    exponent = int(schedule.get("exponent", 1))
+    return shares * rate * price**exponent * (1 - price) ** exponent
+
+
+def net_sale_proceeds(shares: float, gross: float, schedule: Optional[dict]) -> float:
+    """pUSD a SELL fill pays into the wallet. The order response's
+    taking_amount is before the taker fee."""
+    if shares <= 0:
+        return 0.0
+    return round(gross - taker_fee(shares, gross / shares, schedule), 6)
+
+
 def compute_sell_floor(price: float, slippage_pct: float = 10.0) -> float:
     """Worst acceptable sell price: `slippage_pct` below `price`, on the 0.01 grid.
 

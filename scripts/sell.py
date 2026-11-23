@@ -39,6 +39,7 @@ from lib.trading import (  # noqa: E402
     builder_code,
     compute_sell_floor,
     create_client,
+    net_sale_proceeds,
     sdk_estimator,
 )
 from lib.wallet_manager import WalletManager  # noqa: E402
@@ -69,6 +70,7 @@ class SellPlan:
     sell_floor: float  # lowest price the order accepts
     est_proceeds: float  # worst case: merge_shares + sell_shares * sell_floor
     full_exit: bool
+    fee_schedule: Optional[dict] = None  # Gamma feeSchedule; None = no taker fee
 
 
 @dataclass
@@ -173,6 +175,7 @@ def plan_sell(
         sell_floor=sell_floor,
         est_proceeds=round(merge_shares + sell_shares * sell_floor, 4),
         full_exit=full_exit,
+        fee_schedule=market.fee_schedule,
     )
 
 
@@ -200,7 +203,9 @@ def execute_sell(client, plan: SellPlan, storage: PositionStorage) -> SellResult
             if getattr(resp, "ok", False):
                 result.sell_order_id = resp.order_id
                 result.sold_shares = float(resp.making_amount)
-                result.proceeds = float(resp.taking_amount)
+                result.proceeds = net_sale_proceeds(
+                    result.sold_shares, float(resp.taking_amount), plan.fee_schedule
+                )
                 if result.sold_shares < plan.sell_shares - DUST_SHARES:
                     result.error = (
                         f"Partial fill: sold {result.sold_shares:g} of {plan.sell_shares:g}"

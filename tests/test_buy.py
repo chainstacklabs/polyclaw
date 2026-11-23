@@ -168,3 +168,11 @@ class TestExecute:
             PositionStorage(tmp_path / "p.json"),
         )
         client.place_market_order.assert_not_called()
+
+
+def test_recorded_sale_is_net_of_taker_fee(tmp_path):
+    market = _market(fee_schedule={"exponent": 1, "rate": 0.05})
+    plan = plan_buy(market, "YES", 10, max_usd=50)
+    client = _client(sold=10.0)  # taking_amount 6.5 for 10 NO (avg 0.65)
+    result = execute_buy(client, plan, PositionStorage(tmp_path / "p.json"))
+    assert result.sell_proceeds == pytest.approx(6.5 - 10 * 0.05 * 0.65 * 0.35)
