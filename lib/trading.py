@@ -21,7 +21,7 @@ returns a client acting for it. Its address is cached so read-only commands
 
 import json
 import os
-from typing import Optional
+from typing import Callable, Optional
 
 from eth_account import Account
 
@@ -32,8 +32,6 @@ WALLET_CACHE = get_storage_dir() / "wallet.json"
 # Guardrail: largest single trade the skill will execute without an explicit
 # higher limit in the environment.
 DEFAULT_MAX_TRADE_USD = 50.0
-# Polymarket's minimum order value.
-MIN_ORDER_USD = 1.0
 # Fallback share minimum when Gamma omits `orderMinSize` (5 on every live
 # market checked 2026-11-22).
 DEFAULT_MIN_ORDER_SHARES = 5.0
@@ -150,6 +148,33 @@ def cached_deposit_wallet(signer: Optional[str] = None) -> Optional[str]:
     if signer and data.get("signer", "").lower() != signer.lower():
         return None
     return data.get("deposit_wallet")
+
+
+class InsufficientLiquidity(Exception):
+    """The order book can't absorb the sell at any price."""
+
+
+# (token_id, shares) -> worst price level needed to fill that many shares.
+PriceEstimator = Callable[[str, float], float]
+
+
+def sdk_estimator() -> PriceEstimator:
+    """Order-book estimate of the worst price a SELL of `shares` fills at."""
+    from polymarket import PublicClient
+    from polymarket.errors import InsufficientLiquidityError
+
+    def estimate(token_id: str, shares: float) -> float:
+        try:
+            with PublicClient() as client:
+                return float(
+                    client.estimate_market_price(
+                        asset_id=token_id, side="SELL", shares=shares, order_type="FOK"
+                    )
+                )
+        except InsufficientLiquidityError as e:
+            raise InsufficientLiquidity(str(e)) from e
+
+    return estimate
 
 
 def compute_sell_floor(price: float, slippage_pct: float = 10.0) -> float:

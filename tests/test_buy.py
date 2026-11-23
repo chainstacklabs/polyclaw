@@ -7,6 +7,7 @@ from polymarket import SecureClient
 
 from lib.gamma_client import Market
 from lib.position_storage import PositionStorage
+from lib.trading import InsufficientLiquidity
 from trade import execute_buy, plan_buy
 
 
@@ -66,10 +67,37 @@ class TestPlan:
         with pytest.raises(ValueError, match="5-share minimum"):
             plan_buy(_market(), "YES", 3, max_usd=50)
 
-    def test_refuses_sell_under_one_dollar(self):
-        # 6 shares of NO at a 0.09 floor = $0.54
-        with pytest.raises(ValueError, match="under \\$1"):
-            plan_buy(_market(yes_price=0.9, no_price=0.1), "YES", 6, max_usd=50)
+    def test_allows_sell_under_one_dollar(self):
+        # 6 shares of NO at a 0.09 floor = $0.54: the minimum is in shares.
+        plan = plan_buy(_market(yes_price=0.9, no_price=0.1), "YES", 6, max_usd=50)
+        assert plan.sell_unwanted
+
+    def test_floor_comes_from_the_order_book(self):
+        # Mid says 0.70, but the book only bids 0.50 for 10 NO: the floor must
+        # sit under the bid, or the FAK sell finds nothing to match.
+        seen = []
+
+        def book(token_id, shares):
+            seen.append((token_id, shares))
+            return 0.5
+
+        plan = plan_buy(_market(), "YES", 10, max_usd=50, estimate=book)
+        assert seen == [("222", 10)]
+        assert plan.sell_floor == 0.45
+        assert plan.est_recovered == 4.5
+
+    def test_refuses_when_book_is_empty(self):
+        def no_bids(token_id, shares):
+            raise InsufficientLiquidity("no bids")
+
+        with pytest.raises(ValueError, match="order book"):
+            plan_buy(_market(), "YES", 10, max_usd=50, estimate=no_bids)
+
+    def test_skip_sell_does_not_read_the_book(self):
+        def boom(token_id, shares):
+            raise AssertionError("book read on --skip-sell")
+
+        plan_buy(_market(), "YES", 3, max_usd=50, skip_sell=True, estimate=boom)
 
     def test_skip_sell_allows_small_amounts(self):
         plan = plan_buy(_market(), "YES", 3, max_usd=50, skip_sell=True)
