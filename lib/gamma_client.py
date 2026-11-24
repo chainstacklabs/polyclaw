@@ -36,6 +36,8 @@ class Market:
     # Minimum order size in shares (Gamma `orderMinSize`).
     order_min_size: Optional[float] = None
     accepting_orders: bool = True
+    # Gamma `feeSchedule` when `feesEnabled`; None = no taker fee.
+    fee_schedule: Optional[dict] = None
 
 
 @dataclass
@@ -181,6 +183,7 @@ class GammaClient:
                 float(data["orderMinSize"]) if data.get("orderMinSize") else None
             ),
             accepting_orders=bool(data.get("acceptingOrders", True)),
+            fee_schedule=data.get("feeSchedule") if data.get("feesEnabled") else None,
         )
 
     def _parse_event(self, data: dict) -> MarketGroup:
