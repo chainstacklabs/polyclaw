@@ -70,3 +70,10 @@ def test_error_body_reason_is_reported():
 def test_whitespace_reply_is_empty():
     llm = _llm([_reply("  \n"), _reply("ok")])
     assert asyncio.run(llm.complete([{"role": "user", "content": "hi"}])) == "ok"
+
+
+def test_reply_cut_by_a_provider_error_is_retried():
+    # A stream that fails midway ends with finish_reason "error": the text is
+    # a fragment and parses as a wrong (or no) answer.
+    llm = _llm([_reply('{"implications": [', "error"), _reply("ok")])
+    assert asyncio.run(llm.complete([{"role": "user", "content": "hi"}])) == "ok"

@@ -118,21 +118,20 @@ class LLMClient:
                 data = response.json()
                 choice = (data.get("choices") or [{}])[0]
                 content = (choice.get("message") or {}).get("content")
-                if content and content.strip():
+                finish = choice.get("finish_reason")
+                # A provider error mid-reply ends it with finish_reason
+                # "error": the text is a fragment, not an answer.
+                if content and content.strip() and finish != "error":
                     return content
                 # Some models (reasoning ones in particular) can return no
                 # text; OpenRouter can also answer 200 with only an error.
-                finish = choice.get("finish_reason")
                 reason = f"finish_reason={finish}"
                 if data.get("error"):
                     reason += f", error: {data['error'].get('message', data['error'])}"
                 if finish not in _NO_RETRY_FINISH and attempt < LLM_MAX_RETRIES - 1:
                     await asyncio.sleep(1)
                     continue
-                raise LLMEmptyReply(
-                    f"LLM {self.model} returned no text ({reason}); "
-                    "try another model with --model / POLYCLAW_HEDGE_MODEL"
-                )
+                raise LLMEmptyReply(f"LLM {self.model} returned no text ({reason})")
 
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 429:
