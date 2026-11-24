@@ -5,11 +5,11 @@
 </p>
 
 <p align="center">
-  • <a target="_blank" href="https://chainstack.com/">Homepage</a> •
-  <a target="_blank" href="https://chainstack.com/protocols/">Supported protocols</a> •
-  <a target="_blank" href="https://chainstack.com/blog/">Chainstack blog</a> •
-  <a target="_blank" href="https://docs.chainstack.com/reference/blockchain-apis">Blockchain API reference</a> • <br>
-  • <a target="_blank" href="https://console.chainstack.com/user/account/create">Start for free</a> •
+  • <a target="_blank" href="https://chainstack.com/?utm_source=github&utm_medium=referral&utm_campaign=polyclaw">Homepage</a> •
+  <a target="_blank" href="https://chainstack.com/protocols/?utm_source=github&utm_medium=referral&utm_campaign=polyclaw">Supported protocols</a> •
+  <a target="_blank" href="https://chainstack.com/blog/?utm_source=github&utm_medium=referral&utm_campaign=polyclaw">Chainstack blog</a> •
+  <a target="_blank" href="https://docs.chainstack.com/reference/blockchain-apis?utm_source=github&utm_medium=referral&utm_campaign=polyclaw">Blockchain API reference</a> • <br>
+  • <a target="_blank" href="https://console.chainstack.com/sign-up?utm_source=github&utm_medium=referral&utm_campaign=polyclaw">Start for free</a> •
 </p>
 
 An [OpenClaw](https://github.com/openclaw/openclaw) agent skill for trading on **Polymarket**. It lets your AI agent browse prediction markets, buy and sell YES or NO, track P&L, redeem winnings, and find hedging pairs with an LLM. Trades run from your Polymarket deposit wallet on Polygon through Polymarket's official SDK, with a preview before any money moves.
@@ -32,7 +32,7 @@ An [OpenClaw](https://github.com/openclaw/openclaw) agent skill for trading on *
 ### 1. Prerequisites
 
 - [uv](https://docs.astral.sh/uv/getting-started/installation/) — it handles Python, no separate install needed
-- A Polygon RPC endpoint — deploy a Polygon node on [Chainstack](https://console.chainstack.com/user/account/create)
+- A Polygon RPC endpoint — deploy a Polygon node on [Chainstack](https://console.chainstack.com/sign-up?utm_source=github&utm_medium=referral&utm_campaign=polyclaw)
 - A Relayer API key — sign in to polymarket.com with your signing wallet and create one at polymarket.com/settings?tab=api-keys. It works only for that wallet.
 - An [OpenRouter API key](https://openrouter.ai/settings/keys), only for hedge discovery
 
