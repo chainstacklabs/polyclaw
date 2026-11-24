@@ -292,3 +292,26 @@ def test_one_redeem_tx_per_market_per_run(tmp_path):
     saved = storage.load_all()
     assert [p["redeem_payout"] for p in saved] == [10.0, 10.0]
     assert [p["redeem_tx"] for p in saved] == ["0xr", "0xr"]
+
+
+def test_legacy_redeem_is_valued_at_the_payout():
+    # Redeemed before payouts were recorded: the recorded shares are worth
+    # the on-chain payout, not Gamma's last price.
+    pos = _pos(redeem_tx="0xr", status="resolved")
+    pnl = position_pnl(pos, 0.4, 0.6, balances=(0.0, 0.0), payout=(1.0, 0.0))
+    assert pnl.value == 10.0
+    assert pnl.holdings_source == "resolved"
+
+
+def test_assess_reads_both_balances_at_one_block():
+    # Auto-redeem landing between two `latest` reads would mix two states.
+    ctf = _ctf(1, [0, 1])
+    reads = []
+    ctf.functions.balanceOf.side_effect = lambda owner, tid: MagicMock(
+        call=lambda **kw: reads.append(kw) or 0
+    )
+    w3 = _w3(ctf)
+    w3.eth.block_number = 123
+    assess(_pos(condition_id="0x" + "ab" * 32), w3, "0x" + "11" * 20)
+    assert len(reads) == 2
+    assert all(kw == {"block_identifier": 123} for kw in reads)

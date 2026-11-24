@@ -80,7 +80,7 @@ def position_pnl(
     # Redeemed before polyclaw 0.3.0 recorded payouts: the chain shows 0, so
     # value the recorded shares at the resolved prices instead.
     legacy_redeem = position.get("redeem_tx") and position.get("redeem_payout") is None
-    if payout is not None and not legacy_redeem:
+    if payout is not None:
         (shares, other), source = recorded_holdings(position), "resolved"
         price, other_price = payout
     elif balances is not None and not legacy_redeem:

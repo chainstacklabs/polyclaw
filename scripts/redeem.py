@@ -77,11 +77,15 @@ def assess(position: dict, w3: Web3, deposit: str) -> Claim:
         abi=POSITION_MANAGER_ABI if ledger == "POSITION_MANAGER" else CTF_ABI,
     )
     owner = Web3.to_checksum_address(deposit)
+    # One block for both reads: an auto-redeem landing in between would mix
+    # two chain states.
+    block = w3.eth.block_number
 
     def bal(token_id: Optional[str]) -> float:
         if not token_id:
             return 0.0
-        return contract.functions.balanceOf(owner, int(token_id)).call() / 1e6
+        call = contract.functions.balanceOf(owner, int(token_id)).call
+        return call(block_identifier=block) / 1e6
 
     held = bal(position.get("token_id")), bal(position.get("unwanted_token_id"))
     recorded = recorded_holdings(position)
