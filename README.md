@@ -82,7 +82,7 @@ Send pUSD to the deposit wallet address. pUSD on the signing wallet isn't buying
 | Buy | Split pUSD into YES + NO, then sell the side you don't want with a fill-and-kill order and a price floor |
 | Sell | Merge leftover YES + NO pairs back to pUSD at $1 each, then sell the rest; `--shares` sells part |
 | Positions | P&L from what each position cost, what the wallet holds now, and pUSD already back |
-| Redeem | Claim pUSD from resolved markets, gasless |
+| Redeem | Claim pUSD from resolved markets, gasless; records payouts Polymarket already auto-redeemed |
 | Hedges | LLM scan for pairs where one market logically implies another, with coverage tiers |
 | Safety | Preview by default, a spend limit per buy, Polymarket's minimum order sizes checked before spending |
 

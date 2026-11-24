@@ -7,7 +7,9 @@ Gamma shapes below are copied from live markets (2026-11-22): market 7256561
 from unittest.mock import MagicMock
 
 from lib.gamma_client import GammaClient, outcome_token_ids
-from redeem import assess_v2
+from web3.exceptions import ContractLogicError
+
+from redeem import assess
 
 V2 = {
     "id": "7256561",
@@ -60,7 +62,7 @@ def _w3(balances: dict[int, int], payouts: dict[int, int] | None):
 
     def get_payout(pid, amount):
         if payouts is None:
-            return MagicMock(call=MagicMock(side_effect=RuntimeError("unresolved")))
+            return MagicMock(call=MagicMock(side_effect=ContractLogicError("unresolved")))
         return MagicMock(call=MagicMock(return_value=payouts.get(pid, 0) * amount // 10**6))
 
     pm.functions.getPayout.side_effect = get_payout
@@ -75,25 +77,28 @@ POSITION = {
     "position": "YES",
     "token_id": "1001",
     "unwanted_token_id": "1002",
+    "entry_amount": 10.0,  # split 10, sold 6 NO: recorded 10 YES + 4 NO
+    "sold_shares": 6.0,
 }
 DEPOSIT = "0x21c79811788D075ED5C701A0a4875D73c5c92c4f"
 
 
 def test_v2_unresolved_is_not_redeemable():
-    claim = assess_v2(POSITION, _w3({1001: 10_000_000}, payouts=None), DEPOSIT)
+    claim = assess(POSITION, _w3({1001: 10_000_000}, payouts=None), DEPOSIT)
     assert claim.resolved is False
 
 
 def test_v2_winning_payout_counts_held_shares():
     # Held 10 YES + 4 NO (partial sell); YES won: 1 pUSD per YES share
     w3 = _w3({1001: 10_000_000, 1002: 4_000_000}, payouts={1001: 10**6, 1002: 0})
-    claim = assess_v2(POSITION, w3, DEPOSIT)
+    claim = assess(POSITION, w3, DEPOSIT)
     assert claim.resolved is True
     assert claim.payout == 10.0
 
 
 def test_v2_lost_and_nothing_held_is_resolved_zero():
+    # All NO sold at buy time; YES lost; nothing left in the wallet.
     w3 = _w3({}, payouts={1001: 0, 1002: 10**6})
-    claim = assess_v2(POSITION, w3, DEPOSIT)
+    claim = assess({**POSITION, "sold_shares": 10.0}, w3, DEPOSIT)
     assert claim.resolved is True
     assert claim.payout == 0.0

@@ -25,6 +25,7 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 
 from lib.position_storage import PositionStorage, PositionEntry
 from lib.gamma_client import GammaClient
+from lib.payout import payout_rates
 from lib.pnl import position_pnl
 from lib.wallet_manager import WalletManager
 
@@ -64,6 +65,15 @@ class BalanceReader:
             return None
         return shares, other
 
+    def payout(self, position: dict) -> Optional[tuple[float, float]]:
+        """(your side, other side) payout per share once resolved on-chain."""
+        if not self.available or not position.get("token_id"):
+            return None
+        try:
+            return payout_rates(self.manager.web3(), position)
+        except Exception:
+            return None
+
 
 async def calculate_position_pnl(position: dict, gamma: GammaClient, balances) -> dict:
     """P&L for one position; `balances` reads holdings (see BalanceReader)."""
@@ -71,7 +81,10 @@ async def calculate_position_pnl(position: dict, gamma: GammaClient, balances) -
         market = await gamma.get_market(position["market_id"])
     except Exception as e:
         return {"error": f"market lookup failed: {e}"}
-    pnl = position_pnl(position, market.yes_price, market.no_price, balances(position))
+    payout = balances.payout(position) if hasattr(balances, "payout") else None
+    pnl = position_pnl(
+        position, market.yes_price, market.no_price, balances(position), payout=payout
+    )
     return {
         **asdict(pnl),
         "market_active": market.active,

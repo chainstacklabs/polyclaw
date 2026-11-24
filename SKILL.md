@@ -39,7 +39,7 @@ Polymarket's minimum is counted in shares: at least 5 per order on most markets.
 1. **Merge.** If the position still holds both sides (a buy whose second step didn't fill), each YES + NO pair is merged back into 1 pUSD. That's exact, with no price risk.
 2. **Sell.** The rest of your side is sold with a fill-and-kill order. The preview shows the price the order book fills at now and the floor the order won't go below (5% under by default, `--slippage` to change).
 
-`--shares N` sells only part and skips the merge. A position below Polymarket's 5-share minimum can't be sold: hold it and redeem after the market resolves. Closed or resolved markets have no order book, so use `redeem` for those. Selling is allowed in close-only regions.
+`--shares N` sells only part and skips the merge. A position below Polymarket's 5-share minimum can't be sold: hold it and redeem after the market resolves. Closed or resolved markets have no order book, so use `redeem` for those. Polymarket usually auto-redeems resolved positions in the deposit wallet within a minute: `positions` values them at their payout, and `redeem all` records what was paid without sending a transaction. Selling is allowed in close-only regions.
 
 ## Setup (one-time)
 
