@@ -20,6 +20,7 @@ returns a client acting for it. Its address is cached so read-only commands
 """
 
 import json
+import math
 import os
 from typing import Callable, Optional
 
@@ -199,9 +200,15 @@ def net_sale_proceeds(shares: float, gross: float, schedule: Optional[dict]) -> 
 
 
 def compute_sell_floor(price: float, slippage_pct: float = 10.0) -> float:
-    """Worst acceptable sell price: `slippage_pct` below `price`, on the 0.01 grid.
+    """Worst acceptable sell price: `slippage_pct` below `price`, rounded down
+    so it never sits above the book price it came from.
 
-    Multiples of 0.01 are valid on both 0.01- and 0.001-tick markets.
+    On the 0.01 grid, valid on both 0.01- and 0.001-tick markets. Bids under
+    a cent exist only on 0.001-tick books, so those use the 0.001 grid.
     """
     slippage_pct = max(1.0, min(50.0, slippage_pct))
-    return round(max(price * (1 - slippage_pct / 100), 0.01), 2)
+    raw = price * (1 - slippage_pct / 100)
+    tick = 0.01 if price >= 0.01 else 0.001
+    # round() first so float noise (0.63 / 0.01 = 62.999999) doesn't drop a tick
+    ticks = math.floor(round(raw / tick, 6))
+    return round(max(ticks, 1) * tick, 3)
