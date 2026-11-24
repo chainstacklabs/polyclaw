@@ -11,7 +11,7 @@ import httpx
 import pytest
 
 from lib import llm_client
-from lib.llm_client import LLMClient
+from lib.llm_client import LLMClient, LLMEmptyReply
 
 
 def _llm(replies: list[dict]) -> LLMClient:
@@ -36,11 +36,37 @@ def _no_sleep(monkeypatch):
 
 
 def test_empty_reply_is_retried():
-    llm = _llm([_reply(None, "length"), _reply("ok")])
+    llm = _llm([_reply(None), _reply("ok")])
     assert asyncio.run(llm.complete([{"role": "user", "content": "hi"}])) == "ok"
 
 
 def test_always_empty_raises_a_clear_error():
-    llm = _llm([_reply(None, "length")] * llm_client.LLM_MAX_RETRIES)
-    with pytest.raises(RuntimeError, match="no text.*finish_reason=length"):
+    llm = _llm([_reply(None)] * llm_client.LLM_MAX_RETRIES)
+    with pytest.raises(LLMEmptyReply, match="LLM m returned no text.*finish_reason=stop"):
         asyncio.run(llm.complete([{"role": "user", "content": "hi"}]))
+
+
+def test_out_of_budget_is_not_retried():
+    # Same prompt, same budget: a retry would be billed and empty again.
+    replies = [_reply(None, "length"), _reply("ok")]
+    llm = _llm(replies)
+    with pytest.raises(LLMEmptyReply, match="finish_reason=length"):
+        asyncio.run(llm.complete([{"role": "user", "content": "hi"}]))
+    assert len(replies) == 1  # one call made
+
+
+def test_error_body_without_choices_is_retried():
+    # OpenRouter can answer HTTP 200 with only an error object.
+    llm = _llm([{"error": {"message": "provider down"}}, _reply("ok")])
+    assert asyncio.run(llm.complete([{"role": "user", "content": "hi"}])) == "ok"
+
+
+def test_error_body_reason_is_reported():
+    llm = _llm([{"error": {"message": "provider down"}}] * llm_client.LLM_MAX_RETRIES)
+    with pytest.raises(LLMEmptyReply, match="provider down"):
+        asyncio.run(llm.complete([{"role": "user", "content": "hi"}]))
+
+
+def test_whitespace_reply_is_empty():
+    llm = _llm([_reply("  \n"), _reply("ok")])
+    assert asyncio.run(llm.complete([{"role": "user", "content": "hi"}])) == "ok"
