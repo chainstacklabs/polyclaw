@@ -39,9 +39,11 @@ An [OpenClaw](https://github.com/openclaw/openclaw) agent skill for trading on *
 ### 2. Install the skill
 
 ```bash
-clawhub install polyclaw                    # or: cp -r polyclaw ~/.openclaw/skills/
+git clone https://github.com/chainstacklabs/polyclaw.git ~/.openclaw/skills/polyclaw
 cd ~/.openclaw/skills/polyclaw && uv sync
 ```
+
+> **Install from this repo only.** The `polyclaw` skill on ClawHub (`clawhub install polyclaw`) is a different project by another publisher, and other ClawHub copies aren't published by Chainstack.
 
 ### 3. Configure
 
