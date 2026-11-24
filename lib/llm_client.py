@@ -27,6 +27,15 @@ LLM_TIMEOUT = 60.0
 LLM_MAX_RETRIES = 3
 
 
+class LLMEmptyReply(RuntimeError):
+    """The model returned no text, after retries where a retry could help."""
+
+
+# Empty replies with these finish reasons repeat on retry (same prompt, same
+# output budget) and each attempt is billed.
+_NO_RETRY_FINISH = ("length", "content_filter")
+
+
 # =============================================================================
 # LLM CLIENT
 # =============================================================================
@@ -107,7 +116,22 @@ class LLMClient:
                 )
                 response.raise_for_status()
                 data = response.json()
-                return data["choices"][0]["message"]["content"]
+                choice = (data.get("choices") or [{}])[0]
+                content = (choice.get("message") or {}).get("content")
+                finish = choice.get("finish_reason")
+                # A provider error mid-reply ends it with finish_reason
+                # "error": the text is a fragment, not an answer.
+                if content and content.strip() and finish != "error":
+                    return content
+                # Some models (reasoning ones in particular) can return no
+                # text; OpenRouter can also answer 200 with only an error.
+                reason = f"finish_reason={finish}"
+                if data.get("error"):
+                    reason += f", error: {data['error'].get('message', data['error'])}"
+                if finish not in _NO_RETRY_FINISH and attempt < LLM_MAX_RETRIES - 1:
+                    await asyncio.sleep(1)
+                    continue
+                raise LLMEmptyReply(f"LLM {self.model} returned no text ({reason})")
 
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 429:

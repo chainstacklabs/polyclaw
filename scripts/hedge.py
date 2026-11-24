@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 from lib.gamma_client import GammaClient, Market
-from lib.llm_client import LLMClient, DEFAULT_MODEL
+from lib.llm_client import LLMClient, LLMEmptyReply, DEFAULT_MODEL
 from lib.coverage import (
     NECESSARY_PROBABILITY,
     build_portfolio,
@@ -275,9 +275,16 @@ async def extract_implications_for_market(
             llm_result, target_market, other_markets
         )
 
+    except LLMEmptyReply:
+        raise  # already retried: the caller stops instead of billing more calls
     except Exception as e:
         print(f"Error extracting implications: {e}", file=sys.stderr)
         return []
+
+
+def print_empty_reply(e: LLMEmptyReply) -> None:
+    print(f"Error: {e}", file=sys.stderr)
+    print("Try another model with --model / POLYCLAW_HEDGE_MODEL", file=sys.stderr)
 
 
 # =============================================================================
@@ -389,6 +396,7 @@ async def cmd_scan(args):
         return 1
 
     all_portfolios = []
+    failed = False
 
     # Extract implications for each market
     print(f"Analyzing {len(markets)} markets for hedging relationships...", file=sys.stderr)
@@ -407,6 +415,9 @@ async def cmd_scan(args):
                 if not args.json and portfolios:
                     print(f"  Found {len(portfolios)} potential hedges", file=sys.stderr)
 
+    except LLMEmptyReply as e:
+        print_empty_reply(e)  # stop: later markets would fail the same way
+        failed = True
     finally:
         await llm.close()
 
@@ -427,7 +438,7 @@ async def cmd_scan(args):
     else:
         print_portfolios_table(all_portfolios)
 
-    return 0
+    return 1 if failed else 0
 
 
 async def cmd_analyze(args):
@@ -471,6 +482,9 @@ async def cmd_analyze(args):
             portfolios2 = build_portfolios_from_covers(market2, covers2)
             all_portfolios.extend(portfolios2)
 
+    except LLMEmptyReply as e:
+        print_empty_reply(e)
+        return 1
     finally:
         await llm.close()
 
