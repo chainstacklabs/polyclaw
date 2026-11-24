@@ -20,8 +20,9 @@ returns a client acting for it. Its address is cached so read-only commands
 """
 
 import json
+import math
 import os
-from typing import Optional
+from typing import Callable, Optional
 
 from eth_account import Account
 
@@ -32,8 +33,6 @@ WALLET_CACHE = get_storage_dir() / "wallet.json"
 # Guardrail: largest single trade the skill will execute without an explicit
 # higher limit in the environment.
 DEFAULT_MAX_TRADE_USD = 50.0
-# Polymarket's minimum order value.
-MIN_ORDER_USD = 1.0
 # Fallback share minimum when Gamma omits `orderMinSize` (5 on every live
 # market checked 2026-11-22).
 DEFAULT_MIN_ORDER_SHARES = 5.0
@@ -152,10 +151,64 @@ def cached_deposit_wallet(signer: Optional[str] = None) -> Optional[str]:
     return data.get("deposit_wallet")
 
 
-def compute_sell_floor(price: float, slippage_pct: float = 10.0) -> float:
-    """Worst acceptable sell price: `slippage_pct` below `price`, on the 0.01 grid.
+class InsufficientLiquidity(Exception):
+    """The order book can't absorb the sell at any price."""
 
-    Multiples of 0.01 are valid on both 0.01- and 0.001-tick markets.
+
+# (token_id, shares) -> worst price level needed to fill that many shares.
+PriceEstimator = Callable[[str, float], float]
+
+
+def sdk_estimator() -> PriceEstimator:
+    """Order-book estimate of the worst price a SELL of `shares` fills at."""
+    from polymarket import PublicClient
+    from polymarket.errors import InsufficientLiquidityError
+
+    def estimate(token_id: str, shares: float) -> float:
+        try:
+            with PublicClient() as client:
+                return float(
+                    client.estimate_market_price(
+                        asset_id=token_id, side="SELL", shares=shares, order_type="FOK"
+                    )
+                )
+        except InsufficientLiquidityError as e:
+            raise InsufficientLiquidity(str(e)) from e
+
+    return estimate
+
+
+def taker_fee(shares: float, price: float, schedule: Optional[dict]) -> float:
+    """Taker fee in pUSD on a fill of `shares` at `price` (Gamma `feeSchedule`).
+
+    fee = shares * rate * price^exponent * (1 - price)^exponent; matched what
+    reached the wallet on live sells (2026-11-23) to 1e-5.
+    """
+    if not schedule or shares <= 0 or not 0 < price < 1:
+        return 0.0
+    rate = float(schedule.get("rate", 0.0))
+    exponent = int(schedule.get("exponent", 1))
+    return shares * rate * price**exponent * (1 - price) ** exponent
+
+
+def net_sale_proceeds(shares: float, gross: float, schedule: Optional[dict]) -> float:
+    """pUSD a SELL fill pays into the wallet. The order response's
+    taking_amount is before the taker fee."""
+    if shares <= 0:
+        return 0.0
+    return round(gross - taker_fee(shares, gross / shares, schedule), 6)
+
+
+def compute_sell_floor(price: float, slippage_pct: float = 10.0) -> float:
+    """Worst acceptable sell price: `slippage_pct` below `price`, rounded down
+    so it never sits above the book price it came from.
+
+    On the 0.01 grid, valid on both 0.01- and 0.001-tick markets. Bids under
+    a cent exist only on 0.001-tick books, so those use the 0.001 grid.
     """
     slippage_pct = max(1.0, min(50.0, slippage_pct))
-    return round(max(price * (1 - slippage_pct / 100), 0.01), 2)
+    raw = price * (1 - slippage_pct / 100)
+    tick = 0.01 if price >= 0.01 else 0.001
+    # round() first so float noise (0.63 / 0.01 = 62.999999) doesn't drop a tick
+    ticks = math.floor(round(raw / tick, 6))
+    return round(max(ticks, 1) * tick, 3)

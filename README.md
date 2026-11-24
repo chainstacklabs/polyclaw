@@ -101,7 +101,7 @@ Run from the skill directory with `uv run python scripts/polyclaw.py <command>`:
 | `hedge scan` / `hedge analyze <id1> <id2>` | Find or check hedging pairs |
 | `recover scan` / `recover run` | Tokens left on the signing wallet by PolyClaw 0.1.0 |
 
-**How a buy works:** `$10` of pUSD splits into 10 YES + 10 NO. Buying YES at $0.65 sells the 10 NO at no less than $0.32 (10% under their $0.35 price, rounded to the cent; `--slippage` to change), so you hold 10 YES for $6.50–$6.80. If that sale doesn't fill, `buy` exits with code `3`: you hold both sides, which is hedged, not lost.
+**How a buy works:** `$10` of pUSD splits into 10 YES + 10 NO. Buying YES sells the 10 NO at no less than 10% under what the order book pays for 10 NO (if bids are at $0.35, the floor is $0.32; `--slippage` to change), so you hold 10 YES for $6.50–$6.80. If that sale doesn't fill, `buy` exits with code `3`: you hold both sides, which is hedged, not lost.
 
 ## Environment variables
 

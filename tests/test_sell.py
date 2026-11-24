@@ -137,10 +137,11 @@ class TestPlan:
         with pytest.raises(ValueError, match="can't absorb 10 shares"):
             plan_sell(_position(), _market(), 10, 0, no_liquidity)
 
-    def test_refuses_sell_under_one_dollar(self):
-        # 10 shares at a 0.05 floor = $0.50
-        with pytest.raises(ValueError, match="under \\$1"):
-            plan_sell(_position(), _market(), 10, 0, _estimate(0.05))
+    def test_allows_sell_under_one_dollar(self):
+        # 10 shares at ~0.05 = $0.50: Polymarket's minimum is in shares, and a
+        # $0.98 sale filled live (2026-11-23), so no dollar floor on sells.
+        plan = plan_sell(_position(), _market(), 10, 0, _estimate(0.05))
+        assert plan.sell_shares == 10
 
 
 def _client(sold: float = 7.0, proceeds: float = 3.5, ok: bool = True) -> MagicMock:
@@ -174,6 +175,12 @@ def _storage(tmp_path) -> PositionStorage:
 
 
 class TestExecute:
+    def test_proceeds_are_net_of_taker_fee(self, tmp_path):
+        market = _market(fee_schedule={"exponent": 1, "rate": 0.05})
+        plan = plan_sell(_position(), market, 7, 0, _estimate(0.5))
+        result = execute_sell(_client(sold=7.0, proceeds=3.5), plan, _storage(tmp_path))
+        assert result.proceeds == pytest.approx(3.5 - 7 * 0.05 * 0.5 * 0.5)
+
     def test_merges_then_sells_and_closes(self, tmp_path):
         storage = _storage(tmp_path)
         client = _client(sold=7.0, proceeds=3.5)

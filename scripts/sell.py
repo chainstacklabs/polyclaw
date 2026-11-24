@@ -21,7 +21,7 @@ import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -33,11 +33,14 @@ from lib.gamma_client import SUPPORTED_VERSIONS, GammaClient, Market  # noqa: E4
 from lib.position_storage import PositionStorage  # noqa: E402
 from lib.trading import (  # noqa: E402
     DEFAULT_MIN_ORDER_SHARES,
-    MIN_ORDER_USD,
     ConfigError,
+    InsufficientLiquidity,
+    PriceEstimator,
     builder_code,
     compute_sell_floor,
     create_client,
+    net_sale_proceeds,
+    sdk_estimator,
 )
 from lib.wallet_manager import WalletManager  # noqa: E402
 
@@ -48,14 +51,6 @@ EXIT_PARTIAL = 3
 # Balances below this are treated as empty (rounding dust).
 DUST_SHARES = 0.01
 DEFAULT_SLIPPAGE_PCT = 5.0
-
-
-class InsufficientLiquidity(Exception):
-    """The order book can't absorb the sell at any price."""
-
-
-# (token_id, shares) -> worst price level needed to fill that many shares.
-PriceEstimator = Callable[[str, float], float]
 
 
 @dataclass
@@ -75,6 +70,7 @@ class SellPlan:
     sell_floor: float  # lowest price the order accepts
     est_proceeds: float  # worst case: merge_shares + sell_shares * sell_floor
     full_exit: bool
+    fee_schedule: Optional[dict] = None  # Gamma feeSchedule; None = no taker fee
 
 
 @dataclass
@@ -162,10 +158,6 @@ def plan_sell(
                 "Try a smaller --shares."
             ) from e
         sell_floor = compute_sell_floor(est_price, slippage_pct)
-        if sell_shares * sell_floor < MIN_ORDER_USD:
-            raise ValueError(
-                f"The sell would bring under ${MIN_ORDER_USD:g} (Polymarket minimum order value)"
-            )
 
     return SellPlan(
         position_id=pid,
@@ -183,6 +175,7 @@ def plan_sell(
         sell_floor=sell_floor,
         est_proceeds=round(merge_shares + sell_shares * sell_floor, 4),
         full_exit=full_exit,
+        fee_schedule=market.fee_schedule,
     )
 
 
@@ -210,7 +203,9 @@ def execute_sell(client, plan: SellPlan, storage: PositionStorage) -> SellResult
             if getattr(resp, "ok", False):
                 result.sell_order_id = resp.order_id
                 result.sold_shares = float(resp.making_amount)
-                result.proceeds = float(resp.taking_amount)
+                result.proceeds = net_sale_proceeds(
+                    result.sold_shares, float(resp.taking_amount), plan.fee_schedule
+                )
                 if result.sold_shares < plan.sell_shares - DUST_SHARES:
                     result.error = (
                         f"Partial fill: sold {result.sold_shares:g} of {plan.sell_shares:g}"
@@ -248,24 +243,6 @@ def _find_position(storage: PositionStorage, prefix: str) -> dict:
     if len(matches) != 1:
         raise ValueError(f"Expected one position matching {prefix!r}, found {len(matches)}")
     return matches[0]
-
-
-def _sdk_estimator() -> PriceEstimator:
-    from polymarket import PublicClient
-    from polymarket.errors import InsufficientLiquidityError
-
-    def estimate(token_id: str, shares: float) -> float:
-        try:
-            with PublicClient() as client:
-                return float(
-                    client.estimate_market_price(
-                        asset_id=token_id, side="SELL", shares=shares, order_type="FOK"
-                    )
-                )
-        except InsufficientLiquidityError as e:
-            raise InsufficientLiquidity(str(e)) from e
-
-    return estimate
 
 
 def _print_plan(plan: SellPlan) -> None:
@@ -311,7 +288,7 @@ def cmd_sell(args) -> int:
             market,
             held,
             held_other,
-            _sdk_estimator(),
+            sdk_estimator(),
             shares=args.shares,
             slippage_pct=args.slippage,
         )
