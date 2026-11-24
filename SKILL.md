@@ -30,7 +30,7 @@ Polymarket trades from a **deposit wallet**: a personal smart wallet owned by th
 2. **Sell.** Sell the side you don't want right away with a fill-and-kill order. The order fills what it can now and cancels the rest. It won't sell below the floor shown in the preview.
 3. **Result.** You hold `N` shares of your side. The cost is `$N` minus what the sale brought back.
 
-Polymarket's minimums: at least 5 shares per order on most markets, and at least $1 per order. Small buys are refused unless you pass `--skip-sell`, which keeps both sides. Both market types work: standard CTF markets and Polymarket Protocol V2 markets (Gamma `version: "v2"`, rolling out from November 23, 2026). The SDK routes each one to the right contracts.
+Polymarket's minimum is counted in shares: at least 5 per order on most markets. Smaller buys are refused unless you pass `--skip-sell`, which keeps both sides. The other side's sale is priced from the order book, so it fills on markets with wide spreads. Both market types work: standard CTF markets and Polymarket Protocol V2 markets (Gamma `version: "v2"`, rolling out from November 23, 2026). The SDK routes each one to the right contracts.
 
 ## How a sell works
 
@@ -39,7 +39,7 @@ Polymarket's minimums: at least 5 shares per order on most markets, and at least
 1. **Merge.** If the position still holds both sides (a buy whose second step didn't fill), each YES + NO pair is merged back into 1 pUSD. That's exact, with no price risk.
 2. **Sell.** The rest of your side is sold with a fill-and-kill order. The preview shows the price the order book fills at now and the floor the order won't go below (5% under by default, `--slippage` to change).
 
-`--shares N` sells only part and skips the merge. A position below Polymarket's 5-share minimum can't be sold: hold it and redeem after the market resolves. Closed or resolved markets have no order book, so use `redeem` for those. Selling is allowed in close-only regions.
+`--shares N` sells only part and skips the merge. A position below Polymarket's 5-share minimum can't be sold: hold it and redeem after the market resolves. Closed or resolved markets have no order book, so use `redeem` for those. Polymarket usually auto-redeems resolved positions in the deposit wallet within a minute: `positions` values them at their payout, and `redeem all` records what was paid without sending a transaction. Selling is allowed in close-only regions.
 
 ## Setup (one-time)
 

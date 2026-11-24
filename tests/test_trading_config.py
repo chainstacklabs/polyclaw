@@ -8,8 +8,16 @@ from lib.trading import ConfigError, compute_sell_floor
 
 def test_sell_floor_rounds_to_cent_and_clamps():
     assert compute_sell_floor(0.70, 10) == 0.63
-    assert compute_sell_floor(0.005, 10) == 0.01
     assert compute_sell_floor(0.5, 90) == 0.25  # slippage capped at 50%
+
+
+def test_sell_floor_never_above_the_book_price():
+    # Bids below a cent exist only on 0.001-tick books: a 0.01 floor would
+    # sit above every bid and never fill.
+    assert compute_sell_floor(0.005, 10) == 0.004
+    assert compute_sell_floor(0.0005, 10) == 0.001  # lowest tick
+    # Rounded down, not to the nearest cent: 0.016 * 0.99 = 0.01584 -> 0.01.
+    assert compute_sell_floor(0.016, 1) == 0.01
 
 
 def test_max_trade_default_and_override(monkeypatch):

@@ -28,12 +28,15 @@ from lib.gamma_client import SUPPORTED_VERSIONS, GammaClient, Market  # noqa: E4
 from lib.position_storage import PositionEntry, PositionStorage  # noqa: E402
 from lib.trading import (  # noqa: E402
     DEFAULT_MIN_ORDER_SHARES,
-    MIN_ORDER_USD,
     ConfigError,
+    InsufficientLiquidity,
+    PriceEstimator,
     builder_code,
     compute_sell_floor,
     create_client,
     max_trade_usd,
+    net_sale_proceeds,
+    sdk_estimator,
 )
 
 EXIT_OK = 0
@@ -58,6 +61,7 @@ class BuyPlan:
     est_recovered: float  # pUSD back if the unwanted side sells at the floor
     est_cost: float  # amount - est_recovered
     est_entry_price: float  # est_cost per wanted share
+    fee_schedule: Optional[dict] = None  # Gamma feeSchedule; None = no taker fee
 
 
 @dataclass
@@ -80,8 +84,14 @@ def plan_buy(
     max_usd: float,
     skip_sell: bool = False,
     slippage_pct: float = 10.0,
+    estimate: Optional[PriceEstimator] = None,
 ) -> BuyPlan:
-    """Validate a buy and work out what it will do. Raises ValueError if refused."""
+    """Validate a buy and work out what it will do. Raises ValueError if refused.
+
+    The unwanted side's sell floor sits `slippage_pct` under the order book's
+    price for `amount` shares (`estimate`); without an estimator, under the
+    Gamma mid price.
+    """
     side = side.upper()
     if side not in ("YES", "NO"):
         raise ValueError("Side must be YES or NO")
@@ -113,7 +123,7 @@ def plan_buy(
         else (market.no_price, market.yes_price)
     )
 
-    sell_floor = compute_sell_floor(unwanted_price, slippage_pct)
+    sell_price = unwanted_price
     if not skip_sell:
         min_shares = market.order_min_size or DEFAULT_MIN_ORDER_SHARES
         if amount < min_shares:
@@ -122,11 +132,15 @@ def plan_buy(
                 f"market's {min_shares:g}-share minimum order. Use at least "
                 f"${min_shares:g}, or --skip-sell to keep both sides."
             )
-        if amount * sell_floor < MIN_ORDER_USD:
-            raise ValueError(
-                f"The unwanted side would sell for under ${MIN_ORDER_USD:g} "
-                "(Polymarket minimum). Use a larger amount or --skip-sell."
-            )
+        if estimate is not None:
+            try:
+                sell_price = estimate(unwanted, amount)
+            except InsufficientLiquidity as e:
+                raise ValueError(
+                    f"The order book can't absorb {amount:g} shares of the unwanted "
+                    f"side right now ({e}). Try a smaller amount or --skip-sell."
+                ) from e
+    sell_floor = compute_sell_floor(sell_price, slippage_pct)
 
     recovered = 0.0 if skip_sell else round(amount * sell_floor, 4)
     cost = round(amount - recovered, 4)
@@ -146,6 +160,7 @@ def plan_buy(
         est_recovered=recovered,
         est_cost=cost,
         est_entry_price=round(cost / amount, 4),
+        fee_schedule=market.fee_schedule,
     )
 
 
@@ -172,7 +187,9 @@ def execute_buy(client, plan: BuyPlan, storage: PositionStorage) -> BuyResult:
             if getattr(resp, "ok", False):
                 result.sell_order_id = resp.order_id
                 result.sold_shares = float(resp.making_amount)
-                result.sell_proceeds = float(resp.taking_amount)
+                result.sell_proceeds = net_sale_proceeds(
+                    result.sold_shares, float(resp.taking_amount), plan.fee_schedule
+                )
                 if result.sold_shares < plan.amount:
                     result.sell_error = (
                         f"Partial fill: sold {result.sold_shares:g} of {plan.amount:g}"
@@ -234,6 +251,7 @@ async def cmd_buy(args) -> int:
             max_usd=max_trade_usd(),
             skip_sell=args.skip_sell,
             slippage_pct=args.slippage,
+            estimate=None if args.skip_sell else sdk_estimator(),
         )
     except (ValueError, ConfigError) as e:
         print(f"Refused: {e}", file=sys.stderr)
